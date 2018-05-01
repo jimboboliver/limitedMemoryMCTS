@@ -1,9 +1,13 @@
-default: main.c
-	gcc -o mcts main.c -lm
-	gcc -o debug main.c -lm -g
+BOOST=F:\boost\include\boost-1_66\
 
+default: main.cpp
+	g++ -std=c++0x -o mcts main.cpp -lm -I$(BOOST)
 
-debug: main.c
+dot:
+	dot graph0.dot -Tjpg -o graph0.jpg
+
+debug: main.cpp
+	g++ -std=c++0x -o debug main.cpp -lm -g -I$(BOOST)
 
 clean:
 	del mcts.exe
