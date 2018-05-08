@@ -3,8 +3,8 @@ BOOST=F:\boost\include\boost-1_66\
 default: main.cpp
 	g++ -std=c++0x -o mcts main.cpp -lm -I$(BOOST)
 
-dot:
-	dot graph0.dot -Tjpg -o graph0.jpg
+dots:
+	python dots.py
 
 debug: main.cpp
 	g++ -std=c++0x -o debug main.cpp -lm -g -I$(BOOST)
