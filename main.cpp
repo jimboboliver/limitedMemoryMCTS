@@ -145,8 +145,8 @@ bool child_does_not_exist(vertex_t vertex, Graph* graph, Board board) {
     return true;
 }
 
-bool should_be_forgotten(vertex_t vertex, Graph* graph) {
-    return get_root(graph) != vertex && boost::out_degree(vertex, *graph) >= 2;
+bool should_forget(vertex_t vertex, Graph* graph) {
+    return get_root(graph) != vertex && boost::out_degree(vertex, *graph) > 1;
 }
 
 /** Add a random available move from this leaf as a child and return it to simulate from. */
@@ -172,12 +172,12 @@ vertex_t add_child(vertex_t vertex, Graph* graph, Spot player) {
 
     vertex_t child = add_vertex(VertexProperties{.has_state = true, .board = chosen, .wins = 0, .visits = 0}, (*graph)); // Add node and return the vertex descriptor
 
+    add_edge(vertex, child, (*graph));
+
     // if not the root or a leaf and all children are added, mark state as forgotten
-    if (should_be_forgotten(vertex, graph)) {
+    if (should_forget(vertex, graph)) {
         (*graph)[vertex].has_state = false;
     }
-
-    add_edge(vertex, child, (*graph));
 
     return child;
 }
@@ -446,6 +446,8 @@ vertex_t make_human_play(vertex_t root, Graph* graph, Board board) {
 
         add_edge(root, target, (*graph));
     }
+
+    (*graph)[target].has_state = true;
 
     root_changeover(target, graph);
 
