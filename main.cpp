@@ -7,7 +7,7 @@
 #include <boost/graph/adjacency_list.hpp>
 #include <boost/graph/graphviz.hpp>
 
-#define ITERATIONS 10000
+#define ITERATIONS 1000
 
 typedef struct {
     unsigned x:2; // 0 = nothing, 1 = X, 2 = O
@@ -18,11 +18,8 @@ typedef struct {
 } Board;
 
 struct VertexProperties {
-    bool has_state;
-    unsigned action:4;
     float wins;
     int visits;
-    int is_root;
 };
 
 /* define the graph type
@@ -138,49 +135,17 @@ bool same_board(Board board1, Board board2) {
     return true;
 }
 
-bool child_does_not_exist(vertex_t vertex, Graph* graph, int action) {
-    out_edge_iterator ei, ei_end;
-    for (boost::tie(ei, ei_end) = boost::out_edges(vertex, (*graph)); ei != ei_end; ++ei) {
-        if ((*graph)[boost::target(*ei, *graph)].action == action) {
-            return false;
-        }
-    }
-    return true;
-}
-
 vertex_t get_parent(vertex_t vertex, Graph* graph) {
     in_edge_iterator in_begin, in_end;
     
     for (boost::tie(in_begin, in_end) = boost::in_edges(vertex, *graph); in_begin != in_end; ++in_begin) {
-        // printf("%d\n", boost::in_degree(vertex, *graph));
         return boost::source(*in_begin, *graph);
     }
 }
 
-bool should_forget(Board board, vertex_t vertex, Graph* graph) {
-    return get_root(graph) != vertex && (*graph)[get_parent(vertex, graph)].has_state && !has_unborn(board, vertex, graph);
-}
-
-/** Add a random available move from this leaf as a child and return it to simulate from. */
-vertex_t add_child(vertex_t vertex, Graph* graph, Spot player, Board current) {
-    int options[9];
-    int numOptions = 0;
-
-    Board new_board;
-
-    for (int i = 0; i < 9; i++) {
-        if (current.spots[i].x) {
-            continue;
-        }
-
-        if (child_does_not_exist(vertex, graph, i)) {
-            options[numOptions++] = i;
-        }
-    }
-
-    unsigned int chosen = options[rand() % numOptions];
-
-    vertex_t child = add_vertex(VertexProperties{.has_state = true, .action = chosen, .wins = 0, .visits = 0, .is_root = 0}, (*graph)); // Add node and return the vertex descriptor
+/** Add child and return it. */
+vertex_t add_child(vertex_t vertex, Graph* graph) {
+    vertex_t child = add_vertex(VertexProperties{.wins = 0, .visits = 0}, (*graph)); // Add node and return the vertex descriptor
 
     add_edge(vertex, child, (*graph));
 
@@ -201,12 +166,35 @@ Board simulate(Board* board, Spot player) {
     return options[rand() % numOptions];
 }
 
+int get_play(Board parentBoard, vertex_t vertex, Graph* graph) {
+    int options[9];
+    int numOptions = 0;
+    for (int i = 0; i < 9; i++) { // Find all the possible children of the parent
+        if (!parentBoard.spots[i].x) {
+            options[numOptions++] = i;
+        }
+    }
+
+    // printf("%d %d\n", boost::out_degree(get_parent(vertex, graph), *graph), boost::out_degree(vertex, *graph));
+
+    int childIndex = 0;
+    out_edge_iterator ei, ei_end;
+    for (boost::tie(ei, ei_end) = boost::out_edges(get_parent(vertex, graph), *graph); ei != ei_end; ++ei) {
+        if (vertex == boost::target(*ei, *graph)) { // If this is the right child, set the childIndex
+            break;
+        }
+        childIndex++;
+    }
+
+    return options[childIndex]; // Return the child's action
+}
+
 Board make_play(Board board, vertex_t vertex, Graph* graph, Spot player) {
-    board.spots[(*graph)[vertex].action].x = player.x;
+    board.spots[get_play(board, vertex, graph)].x = player.x;
     return board;
 }
 
-void backpropagate(vertex_t vertex, Graph* graph, int result, Spot player, Board currentBoard) {
+void backpropagate(vertex_t vertex, Graph* graph, int result, Spot player) {
     std::list<vertex_t> path;
     while (boost::in_degree(vertex, *graph)) { // While we are not at the root
         path.push_front(vertex);
@@ -217,7 +205,6 @@ void backpropagate(vertex_t vertex, Graph* graph, int result, Spot player, Board
         }
         (*graph)[vertex].visits++;
         player.x = player.x ^ 3; // Switch player
-        currentBoard.spots[(*graph)[vertex].action].x = 0;
         vertex = get_parent(vertex, graph);
     }
     // Update the root node
@@ -227,15 +214,6 @@ void backpropagate(vertex_t vertex, Graph* graph, int result, Spot player, Board
         (*graph)[vertex].wins += 0.5;
     }    
     (*graph)[vertex].visits += 1;
-
-    player.x = 1;
-    for (vertex_t v : path) {
-        // if not the root or a leaf and all children are added, mark state as forgotten
-        currentBoard = make_play(currentBoard, v, graph, player);
-        if (should_forget(currentBoard, v, graph)) {
-            (*graph)[v].has_state = false;
-        }
-    }
 }
 
 bool is_leaf(vertex_t vertex, Graph* graph) {
@@ -258,17 +236,13 @@ Spot who_played(Board state) {
     return Spot{2};
 }
 
-std::string get_colour(bool has_state, int who) {
-    if (has_state) {
-        if (who == 1) {
-            return "green";
-        } else if (who == 2) {
-            return "blue";
-        }
-        return "black";
-    } else {
-        return "red";
+std::string get_colour(int who) {
+    if (who == 1) {
+        return "green";
+    } else if (who == 2) {
+        return "blue";
     }
+    return "black";
 }
 
 template <typename Map>
@@ -286,19 +260,21 @@ struct my_node_writer {
             vertex = get_parent(vertex, &g);
         }
 
+        vertex_t parent = vertex;
         for (vertex_t testVertex : path) {
             player = player ^ 3;
-            board.spots[g[testVertex].action].x = player;
+            board = make_play(board, testVertex, &g, Spot{(unsigned int) player});
+            parent = testVertex;
         }
 
-        // out << " [label=\"" << print_board(board) << "\"]" << std::endl;
-        if (g[v].has_state) {
-            out << " [label=\"" << print_board(board) << "\"]" << std::endl;
+        out << " [label=\"" << print_board(board) << "\"]" << std::endl;
+        if (terminal(&board)) {
+            out << " [color=\"" << "black" << "\"]" << std::endl;
+            out << " [fontcolor=\"" << "black" << "\"]" << std::endl;
         } else {
-            out << " [label=\"" << "   \n   \n   \n" << "\"]" << std::endl;
+            out << " [color=\"" << get_colour(player) << "\"]" << std::endl;
+            out << " [fontcolor=\"" << get_colour(player) << "\"]" << std::endl;
         }
-        out << " [color=\"" << get_colour(g[v].has_state, player) << "\"]" << std::endl;
-        out << " [fontcolor=\"" << get_colour(g[v].has_state, player) << "\"]" << std::endl;
     };
     Map g;
 };
@@ -314,7 +290,7 @@ struct my_edge_writer {
     template <class Edge>
     void operator()(std::ostream& out, Edge e) {
         vertex_t pointing_at = boost::target(e, g);
-        out << " [label=\""<< "\"]" << std::endl;
+        out << " [label=\""<< g[pointing_at].wins / g[pointing_at].visits << "\"]" << std::endl;
     };
     Map g;
 };
@@ -387,51 +363,12 @@ std::list<vertex_t> get_children(vertex_t vertex, Graph* graph) {
     return children;
 }
 
-void regenerate_state(vertex_t vertex, Graph* graph, Board parentBoard) {
-    std::list<vertex_t> children = get_children(vertex, graph);
-    vertex_t parent = get_parent(vertex, graph);
-
-    int player;
-
-    int possible_moves[9];
-    for (int i = 0; i < 9; i++) {
-        if (!parentBoard.spots[i].x) { // If the spot is empty it's a possible move
-            possible_moves[i] = 1;
-        } else {
-            possible_moves[i] = 0;
-        }
-    }
-
-    for (vertex_t child : children) {
-        possible_moves[(*graph)[child].action] = 0;
-    }
-
-    int action = -1;
-    // Finally find the one action that is left at 1
-    for (int i = 0; i < 9; i++) {
-        if (possible_moves[i]) {
-            action = i;
-        }
-    }
-
-    if (action != (*graph)[vertex].action) {
-        printf("Regenerate failed.\n");
-        
-        // std::cout << print_board(parentBoard);
-        // std::cout.flush();
-        // parentBoard.spots[action] = 
-        // std::cout << print_board(board);
-        // std::cout.flush();
-        exit(1);
-    }
-
-    (*graph)[vertex].has_state = true;
-}
-
 vertex_t make_best_play(Graph* graph) {
     vertex_t root = get_root(graph);
     float max_value = -1;
     float new_value;
+    int best_index = 0;
+    int i = 0;
     vertex_t best;
     out_edge_iterator ei, ei_end;
 
@@ -444,56 +381,51 @@ vertex_t make_best_play(Graph* graph) {
         if (new_value > max_value) {
             max_value = new_value;
             best = target;
+            best_index = i;
         }
+        i++;
     }
-
-    root_changeover(best, graph);
 
     return best;
 }
 
-vertex_t make_human_play(vertex_t root, Graph* graph, unsigned int action) {
-    vertex_t target;
-    out_edge_iterator ei, ei_end;
-    bool found = false;
-    for (boost::tie(ei, ei_end) = boost::out_edges(root, (*graph)); ei != ei_end; ++ei) {
-        target = boost::target(*ei, *graph);
-        if ((*graph)[target].action == action) {
-            found = true;
+vertex_t make_human_play(Board parentBoard, vertex_t root, Graph* graph, unsigned int action) {
+    int options[9];
+    int numOptions = 0;
+    for (int i = 0; i < 9; i++) { // Find all the possible children of the parent
+        if (!parentBoard.spots[i].x) {
+            options[numOptions++] = i;
+        }
+        if (i == action) {
             break;
         }
     }
 
-    if (!found) {
-        VertexProperties childProperties{.has_state = true, .action = action, .wins = 0, .visits = 0, .is_root = 0};
-        target = add_vertex(childProperties, (*graph));
+    vertex_t target;
+    int numCurrentChildren = boost::out_degree(root, *graph);
+    if (numOptions <= numCurrentChildren) {
+        int childIndex = 0;
+        out_edge_iterator ei, ei_end;
+        for (boost::tie(ei, ei_end) = boost::out_edges(root, *graph); ei != ei_end; ++ei) {
+            if (childIndex++ == numOptions - 1) { // If this is the right child, set the childIndex
+                target = boost::target(*ei, *graph);
+                break;
+            }
+        }
+    } else {
+        for (int i = 0; i < numOptions - numCurrentChildren; i++) {
+            VertexProperties childProperties{.wins = 0, .visits = 0};
+            target = add_vertex(childProperties, (*graph));
 
-        add_edge(root, target, (*graph));
+            add_edge(root, target, (*graph));
+        }
     }
-
-    (*graph)[target].has_state = true;
-
-    root_changeover(target, graph);
 
     return target;
 }
 
-void count_nodes(Graph* graph) {
-    int numNodes = 0;
-    int numForgotten = 0;
-    std::pair<vertex_iterator, vertex_iterator> vp;
-    for (vp = boost::vertices(*graph); vp.first != vp.second; ++vp.first) {
-        numNodes++;
-        if (!(*graph)[*vp.first].has_state) {
-            numForgotten++;
-        }
-    }
-    // printf("Total nodes: %d\n", numNodes);
-    // printf("Forgotten nodes: %d\n", numForgotten);
-}
-
 int main() {
-    std::srand(std::time(NULL));
+    std::srand(time(NULL));
 
     int write_iteration = 0;
 
@@ -501,11 +433,10 @@ int main() {
 
     rootBoard = Board{0};
 
-    vertex_t vertex = boost::add_vertex(VertexProperties{.has_state = true, .action = (unsigned int) 0, .wins = 0, .visits = 0, .is_root = 1}, graph); // Add root node
+    vertex_t vertex = boost::add_vertex(VertexProperties{.wins = 0, .visits = 0}, graph); // Add root node
 
     while (1) {
         int term;
-
 
          // MCTS iterations
         for (int it = 0; it < ITERATIONS; it++) {
@@ -517,11 +448,6 @@ int main() {
             // Select
             while (boost::out_degree(vertex, graph) && !has_unborn(currentBoard, vertex, &graph)) {
                 vertex = select_child(vertex, &graph);
-
-                if (!graph[vertex].has_state) {
-                    regenerate_state(vertex, &graph, currentBoard);
-                }
-
                 currentBoard = make_play(currentBoard, vertex, &graph, player);
                 player.x = player.x ^ 3; // Switch player
             }
@@ -529,7 +455,7 @@ int main() {
             // Expand
             if (!(term = terminal(&currentBoard))) {
                 if (has_unborn(currentBoard, vertex, &graph)) {
-                    vertex = add_child(vertex, &graph, player, currentBoard);
+                    vertex = add_child(vertex, &graph);
                     currentBoard = make_play(currentBoard, vertex, &graph, player);
                     player.x = player.x ^ 3; // Switch player
                 }
@@ -544,15 +470,14 @@ int main() {
 
             // Backpropagate
             player.x = player.x ^ 3; // Switch player
-            backpropagate(vertex, &graph, term, player, currentBoard);
+            backpropagate(vertex, &graph, term, player);
         }
         
-        count_nodes(&graph);
-
         write_dot(&graph, write_iteration++);
 
         vertex = make_best_play(&graph);
         rootBoard = make_play(rootBoard, vertex, &graph, Spot{1});
+        root_changeover(vertex, &graph);
 
         std::cout << print_board(rootBoard);
         std::cout.flush();
@@ -582,8 +507,9 @@ int main() {
             }
         }
 
-        vertex = make_human_play(vertex, &graph, humanPlay);
+        vertex = make_human_play(rootBoard, vertex, &graph, humanPlay);
         rootBoard = make_play(rootBoard, vertex, &graph, Spot{2});
+        root_changeover(vertex, &graph);
 
         std::cout << print_board(rootBoard);
         std::cout.flush();
