@@ -1,21 +1,14 @@
 #include <iostream>
 #include <fstream>
-#include <sstream>
 #include <stdlib.h>
 #include <ctime>
 #include <vector>
 #include <boost/graph/adjacency_list.hpp>
 #include <boost/graph/graphviz.hpp>
 
+#include "game.hpp"
+
 #define ITERATIONS 1000
-
-typedef struct {
-    unsigned x:2; // 0 = nothing, 1 = X, 2 = O
-} Spot;
-
-typedef struct {
-    Spot spots[9];
-} Board;
 
 struct VertexProperties {
     float wins;
@@ -38,43 +31,13 @@ typedef boost::graph_traits<Graph>::out_edge_iterator out_edge_iterator;
 typedef boost::graph_traits<Graph>::in_edge_iterator in_edge_iterator;
 typedef std::map<vertex_t, size_t> IndexMap;
 
-Board rootBoard;
-
-char get_spot(Spot spot) {
-    if (spot.x == 1) {
-        return 'X';
-    } else if (spot.x == 2) {
-        return 'O';
-    } else {
-        return '*';
-    }
-}
-
-std::string print_board(Board board) {
-    std::ostringstream ss;
-    ss << get_spot(board.spots[0]) << get_spot(board.spots[1]) << get_spot(board.spots[2]) << '\n' << 
-            get_spot(board.spots[3]) << get_spot(board.spots[4]) << get_spot(board.spots[5]) << '\n' << get_spot(board.spots[6])
-            << get_spot(board.spots[7]) << get_spot(board.spots[8]) << '\n';
-    return ss.str();
-}
-
 vertex_t get_root(Graph* graph) {
     std::pair<vertex_iterator,vertex_iterator> it = boost::vertices(*graph);
     return *it.first;
 }
 
-int num_possible_moves(Board board) {
-    int num_moves = 0;
-    for (int i = 0; i < 9; i++) {
-        if (!board.spots[i].x) { // If the spot is empty it's a possible move
-            num_moves++;
-        }
-    }
-    return num_moves;
-}
-
-bool has_unborn(Board board, vertex_t vertex, Graph* graph) {
-    return num_possible_moves(board) != boost::out_degree(vertex, (*graph));
+bool has_unborn(vertex_t vertex, Graph* graph) {
+    return num_possible_moves() != boost::out_degree(vertex, (*graph));
 }
 
 vertex_t select_child(vertex_t vertex, Graph* graph) {
@@ -97,44 +60,6 @@ vertex_t select_child(vertex_t vertex, Graph* graph) {
     return best;
 }
 
-int no_moves_left(Board* board) {
-    return board->spots[0].x && board->spots[1].x && board->spots[2].x && board->spots[3].x && board->spots[4].x && 
-            board->spots[5].x && board->spots[6].x && board->spots[7].x && board->spots[8].x;
-}
-
-/** Return whether tic-tac-toe state is gameover and if so, who won. 0 = not gameover, 1 = X, 2 = O, 3 = draw */
-int terminal(Board* board) {
-    if (board->spots[0].x && board->spots[0].x == board->spots[1].x && board->spots[1].x == board->spots[2].x) {
-        return board->spots[0].x;
-    } else if (board->spots[3].x && board->spots[3].x == board->spots[4].x && board->spots[4].x == board->spots[5].x) {
-        return board->spots[3].x;
-    } else if (board->spots[6].x && board->spots[6].x == board->spots[7].x && board->spots[7].x == board->spots[8].x) {
-        return board->spots[6].x;
-    } else if (board->spots[0].x && board->spots[0].x == board->spots[3].x && board->spots[3].x == board->spots[6].x) {
-        return board->spots[0].x;
-    } else if (board->spots[1].x && board->spots[1].x == board->spots[4].x && board->spots[4].x == board->spots[7].x) {
-        return board->spots[1].x;
-    } else if (board->spots[2].x && board->spots[2].x == board->spots[5].x && board->spots[5].x == board->spots[8].x) {
-        return board->spots[2].x;
-    } else if (board->spots[0].x && board->spots[0].x == board->spots[4].x && board->spots[4].x == board->spots[8].x) {
-        return board->spots[0].x;
-    } else if (board->spots[2].x && board->spots[2].x == board->spots[4].x && board->spots[4].x == board->spots[6].x) {
-        return board->spots[2].x;
-    } else if (no_moves_left(board)) {
-        return 3;
-    }
-    return 0;
-}
-
-bool same_board(Board board1, Board board2) {
-    for (int i = 0; i < 9; i++) {
-        if (board1.spots[i].x != board2.spots[i].x) {
-            return false;
-        }
-    }
-    return true;
-}
-
 vertex_t get_parent(vertex_t vertex, Graph* graph) {
     in_edge_iterator in_begin, in_end;
     
@@ -150,48 +75,6 @@ vertex_t add_child(vertex_t vertex, Graph* graph) {
     add_edge(vertex, child, (*graph));
 
     return child;
-}
-
-Board simulate(Board* board, Spot player) {
-    Board options[9];
-    int numOptions = 0;
-
-    for (int i = 0; i < 9; i++) {
-        if (!board->spots[i].x) {
-            options[numOptions] = *board;
-            options[numOptions++].spots[i].x = player.x;
-        }
-    }
-
-    return options[rand() % numOptions];
-}
-
-int get_play(Board parentBoard, vertex_t vertex, Graph* graph) {
-    int options[9];
-    int numOptions = 0;
-    for (int i = 0; i < 9; i++) { // Find all the possible children of the parent
-        if (!parentBoard.spots[i].x) {
-            options[numOptions++] = i;
-        }
-    }
-
-    // printf("%d %d\n", boost::out_degree(get_parent(vertex, graph), *graph), boost::out_degree(vertex, *graph));
-
-    int childIndex = 0;
-    out_edge_iterator ei, ei_end;
-    for (boost::tie(ei, ei_end) = boost::out_edges(get_parent(vertex, graph), *graph); ei != ei_end; ++ei) {
-        if (vertex == boost::target(*ei, *graph)) { // If this is the right child, set the childIndex
-            break;
-        }
-        childIndex++;
-    }
-
-    return options[childIndex]; // Return the child's action
-}
-
-Board make_play(Board board, vertex_t vertex, Graph* graph, Spot player) {
-    board.spots[get_play(board, vertex, graph)].x = player.x;
-    return board;
 }
 
 void backpropagate(vertex_t vertex, Graph* graph, int result, Spot player) {
@@ -220,7 +103,7 @@ bool is_leaf(vertex_t vertex, Graph* graph) {
     return !boost::in_degree(vertex, *graph) || !boost::out_degree(vertex, *graph);
 }
 
-Spot who_played(Board state) {
+Spot who_played(State state) {
     int num_played = 0;
     for (int i = 0; i < 9; i++) {
         if (state.spots[i].x) {
@@ -253,7 +136,7 @@ struct my_node_writer {
         std::list<vertex_t> path;
         int player = 2;
         vertex_t vertex = v;
-        Board board = rootBoard;
+        State board = rootState;
 
         while (boost::in_degree(vertex, g)) { // While we are not at the root
             path.push_front(vertex);
@@ -267,7 +150,7 @@ struct my_node_writer {
             parent = testVertex;
         }
 
-        out << " [label=\"" << print_board(board) << "\"]" << std::endl;
+        out << " [label=\"" << print_environment(board) << "\"]" << std::endl;
         if (terminal(&board)) {
             out << " [color=\"" << "black" << "\"]" << std::endl;
             out << " [fontcolor=\"" << "black" << "\"]" << std::endl;
@@ -389,11 +272,11 @@ vertex_t make_best_play(Graph* graph) {
     return best;
 }
 
-vertex_t make_human_play(Board parentBoard, vertex_t root, Graph* graph, unsigned int action) {
+vertex_t make_human_play(State parentState, vertex_t root, Graph* graph, unsigned int action) {
     int options[9];
     int numOptions = 0;
     for (int i = 0; i < 9; i++) { // Find all the possible children of the parent
-        if (!parentBoard.spots[i].x) {
+        if (!parentState.spots[i].x) {
             options[numOptions++] = i;
         }
         if (i == action) {
@@ -431,7 +314,7 @@ int main() {
 
     Graph graph;
 
-    rootBoard = Board{0};
+    rootState = State{0};
 
     vertex_t vertex = boost::add_vertex(VertexProperties{.wins = 0, .visits = 0}, graph); // Add root node
 
@@ -440,30 +323,30 @@ int main() {
 
          // MCTS iterations
         for (int it = 0; it < ITERATIONS; it++) {
-            Board currentBoard = rootBoard;
+            State currentState = rootState;
 
             vertex = get_root(&graph);
             Spot player = {1}; // Start with AI player
 
             // Select
-            while (boost::out_degree(vertex, graph) && !has_unborn(currentBoard, vertex, &graph)) {
+            while (boost::out_degree(vertex, graph) && !has_unborn(currentState, vertex, &graph)) {
                 vertex = select_child(vertex, &graph);
-                currentBoard = make_play(currentBoard, vertex, &graph, player);
+                currentState = make_play(currentState, vertex, &graph, player);
                 player.x = player.x ^ 3; // Switch player
             }
 
             // Expand
-            if (!(term = terminal(&currentBoard))) {
-                if (has_unborn(currentBoard, vertex, &graph)) {
+            if (!(term = terminal(&currentState))) {
+                if (has_unborn(currentState, vertex, &graph)) {
                     vertex = add_child(vertex, &graph);
-                    currentBoard = make_play(currentBoard, vertex, &graph, player);
+                    currentState = make_play(currentState, vertex, &graph, player);
                     player.x = player.x ^ 3; // Switch player
                 }
 
                 // Simulate
-                Board simBoard = currentBoard;
-                while (!(term = terminal(&simBoard))) {
-                    simBoard = simulate(&simBoard, player);
+                State simState = currentState;
+                while (!(term = terminal(&simState))) {
+                    simState = simulate(&simState, player);
                     player.x = player.x ^ 3; // Switch player
                 }
             }
@@ -476,13 +359,13 @@ int main() {
         write_dot(&graph, write_iteration++);
 
         vertex = make_best_play(&graph);
-        rootBoard = make_play(rootBoard, vertex, &graph, Spot{1});
+        rootState = make_play(rootState, vertex, &graph, Spot{1});
         root_changeover(vertex, &graph);
 
-        std::cout << print_board(rootBoard);
+        std::cout << print_environment(rootState);
         std::cout.flush();
 
-        term = terminal(&rootBoard);
+        term = terminal(&rootState);
 
         if (term == 1) {
             printf("\nGame over! AI wins\n");
@@ -500,23 +383,23 @@ int main() {
             humanPlay = std::cin.get() - 48;
             while ((ch = std::cin.get()) != '\n' && ch != EOF);
             printf("\n");
-            if (rootBoard.spots[humanPlay].x || humanPlay > 8 || humanPlay < 0) {
+            if (rootState.spots[humanPlay].x || humanPlay > 8 || humanPlay < 0) {
                 printf("Cannot make play. Enter play: ");
             } else {
                 break;
             }
         }
 
-        vertex = make_human_play(rootBoard, vertex, &graph, humanPlay);
-        rootBoard = make_play(rootBoard, vertex, &graph, Spot{2});
+        vertex = make_human_play(rootState, vertex, &graph, humanPlay);
+        rootState = make_play(rootState, vertex, &graph, Spot{2});
         root_changeover(vertex, &graph);
 
-        std::cout << print_board(rootBoard);
+        std::cout << print_environment(rootState);
         std::cout.flush();
 
         printf("\n");
 
-        term = terminal(&rootBoard);
+        term = terminal(&rootState);
 
         if (term == 2) {
             printf("\nGame over! Player wins\n");
