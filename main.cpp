@@ -49,7 +49,8 @@ class LimitedMemoryMCTS {
 
         static vertex_t root_changeover(vertex_t chosen);
 
-        std::list<vertex_properties> get_children(vertex_t vertex);
+        std::list<vertex_properties> get_child_properties(vertex_t vertex);
+        std::list<vertex_t> get_children(vertex_t vertex);
 
         static vertex_t make_best_play();
 
@@ -130,9 +131,9 @@ typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex
 template<typename vertex_properties>
 typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex_properties>::add_child(LimitedMemoryMCTS<vertex_properties>::vertex_t vertex) {
     vertex_properties vp = LimitedMemoryMCTS<vertex_properties>::graph[vertex].generate_child();
-    LimitedMemoryMCTS<vertex_properties>::vertex_t child = add_vertex(vp, LimitedMemoryMCTS<vertex_properties>::graph); // Add node and return the vertex descriptor
+    LimitedMemoryMCTS<vertex_properties>::vertex_t child = boost::add_vertex(vp, LimitedMemoryMCTS<vertex_properties>::graph); // Add node and return the vertex descriptor
 
-    add_edge(vertex, child, LimitedMemoryMCTS<vertex_properties>::graph);
+    boost::add_edge(vertex, child, LimitedMemoryMCTS<vertex_properties>::graph);
 
     return child;
 }
@@ -179,7 +180,18 @@ typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex
 }
 
 template<typename vertex_properties>
-std::list<vertex_properties> LimitedMemoryMCTS<vertex_properties>::get_children(LimitedMemoryMCTS<vertex_properties>::vertex_t vertex) {
+std::list<vertex_properties> LimitedMemoryMCTS<vertex_properties>::get_child_properties(LimitedMemoryMCTS<vertex_properties>::vertex_t vertex) {
+    std::list<LimitedMemoryMCTS<vertex_properties>::vertex_t> children;
+    LimitedMemoryMCTS<vertex_properties>::out_edge_iterator ei, ei_end;
+    for (boost::tie(ei, ei_end) = boost::out_edges(vertex, LimitedMemoryMCTS<vertex_properties>::graph); ei != ei_end; ++ei) {
+        children.push_back(boost::target(*ei, LimitedMemoryMCTS<vertex_properties>::graph));
+    }
+
+    return children;
+}
+
+template<typename vertex_properties>
+std::list<LimitedMemoryMCTS<vertex_properties>::vertex_t> LimitedMemoryMCTS<vertex_properties>::get_children(LimitedMemoryMCTS<vertex_properties>::vertex_t vertex) {
     std::list<vertex_properties> children;
     LimitedMemoryMCTS<vertex_properties>::out_edge_iterator ei, ei_end;
     for (boost::tie(ei, ei_end) = boost::out_edges(vertex, LimitedMemoryMCTS<vertex_properties>::graph); ei != ei_end; ++ei) {
@@ -261,36 +273,18 @@ vertex_properties LimitedMemoryMCTS<vertex_properties>::get_vertex_properties(Li
 
 template<typename vertex_properties>
 typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex_properties>::make_play(LimitedMemoryMCTS<vertex_properties>::vertex_t root, vertex_properties vp) {
-    int options[9];
-    int numOptions = 0;
-    for (int i = 0; i < 9; i++) { // Find all the possible children of the parent
-        if (!parentBoard.spots[i].x) {
-            options[numOptions++] = i;
-        }
-        if (i == action) {
-            break;
+    std::list<LimitedMemoryMCTS<vertex_properties>::vertex_t> children = LimitedMemoryMCTS<vertex_properties>::get_children(root);
+
+    for (std::list<LimitedMemoryMCTS<vertex_properties>::vertex_t>::iterator it = children.begin(); it != children.end(); ++it) {
+        if (LimitedMemoryMCTS<vertex_properties>::graph[*it].equals(vp)) {
+            return *it;
         }
     }
 
-    MCTS::vertex_t target;
-    int numCurrentChildren = boost::out_degree(root, *graph);
-    if (numOptions <= numCurrentChildren) {
-        int childIndex = 0;
-        MCTS::out_edge_iterator ei, ei_end;
-        for (boost::tie(ei, ei_end) = boost::out_edges(root, *graph); ei != ei_end; ++ei) {
-            if (childIndex++ == numOptions - 1) { // If this is the right child, set the childIndex
-                target = boost::target(*ei, *graph);
-                break;
-            }
-        }
-    } else {
-        for (int i = 0; i < numOptions - numCurrentChildren; i++) {
-            VertexProperties childProperties{.wins = 0, .visits = 0};
-            target = add_vertex(childProperties, (*graph));
+    // If we got to this point, we need to add the new node
+    LimitedMemoryMCTS<vertex_properties>::vertex_t child = add_vertex(vp, LimitedMemoryMCTS<vertex_properties>::graph); // Add node and return the vertex descriptor
 
-            add_edge(root, target, (*graph));
-        }
-    }
+    add_edge(root, child, LimitedMemoryMCTS<vertex_properties>::graph);
 
     return target;
 }
