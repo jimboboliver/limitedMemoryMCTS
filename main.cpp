@@ -4,9 +4,298 @@
 #include <stdlib.h>
 #include <ctime>
 #include <vector>
-#include "mcts.hpp"
+#include <boost/graph/adjacency_list.hpp>
+#include <boost/graph/graphviz.hpp>
 
 #define ITERATIONS 1000
+
+template<typename vertex_properties>
+class LimitedMemoryMCTS {
+    public:
+        /* define the graph type
+            listS: selects the STL list container to store 
+                    the OutEdge list
+            listS: selects the STL vector container to store 
+                the vertices
+            directedS: selects directed edges
+
+            template allows for vertex_properties to be written for specific use
+        */
+        typedef boost::adjacency_list<boost::listS, boost::listS, boost::bidirectionalS, vertex_properties> Graph;
+        typedef typename boost::graph_traits<Graph>::vertex_descriptor vertex_t;
+        typedef typename boost::graph_traits<Graph>::edge_descriptor edge_t;
+        typedef typename boost::graph_traits<Graph>::edge_iterator edge_iterator;
+        typedef typename boost::graph_traits<Graph>::vertex_iterator vertex_iterator;
+        typedef typename boost::graph_traits<Graph>::out_edge_iterator out_edge_iterator;
+        typedef typename boost::graph_traits<Graph>::in_edge_iterator in_edge_iterator;
+        typedef std::map<vertex_t, size_t> IndexMap;
+
+        static vertex_t add_vertex(vertex_properties vp);
+
+        static vertex_t get_root();
+        
+        static vertex_t select_child(vertex_t vertex);
+
+        static vertex_t select(vertex_t vertex);
+
+        static vertex_t get_parent(vertex_t vertex);
+
+        /* Add child and return it. */
+        static vertex_t add_child(vertex_t vertex);
+
+        bool is_leaf(vertex_t vertex);
+
+        static std::list<vertex_t> delete_branch(vertex_t vertex);
+
+        static vertex_t root_changeover(vertex_t chosen);
+
+        std::list<vertex_properties> get_children(vertex_t vertex);
+
+        static vertex_t make_best_play();
+
+        static int terminal(vertex_t vertex);
+        
+        static bool has_unborn(vertex_t vertex);
+
+        static int simulate(vertex_t vertex);
+
+        static void backpropagate(vertex_t vertex, int result);
+    
+        static Graph get_graph();
+
+        static vertex_properties get_vertex_properties(vertex_t vertex);
+
+        static vertex_t make_play(vertex_t root, vertex_properties vp);
+
+    private:
+        Graph graph;
+};
+
+template<typename vertex_properties>
+typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex_properties>::add_vertex(vertex_properties vp) {
+    boost::add_vertex(vp, LimitedMemoryMCTS<vertex_properties>::graph);
+}
+
+template<typename vertex_properties>
+typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex_properties>::get_root() {
+    std::pair<vertex_iterator, vertex_iterator> it = boost::vertices(LimitedMemoryMCTS<vertex_properties>::graph);
+    return *it.first;
+}
+
+template<typename vertex_properties>
+typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex_properties>::select_child(LimitedMemoryMCTS<vertex_properties>::vertex_t vertex) {
+    float max_value = 0;
+    float new_value;
+    LimitedMemoryMCTS<vertex_properties>::vertex_t best;
+    LimitedMemoryMCTS<vertex_properties>::out_edge_iterator ei, ei_end;
+
+    for (boost::tie(ei, ei_end) = boost::out_edges(vertex, (LimitedMemoryMCTS<vertex_properties>::graph)); ei != ei_end; ++ei) {
+        LimitedMemoryMCTS<vertex_properties>::vertex_t target = boost::target(*ei, LimitedMemoryMCTS<vertex_properties>::graph);
+
+        new_value = (LimitedMemoryMCTS<vertex_properties>::graph)[target].wins / (LimitedMemoryMCTS<vertex_properties>::graph)[target].visits + sqrt(2 * log((LimitedMemoryMCTS<vertex_properties>::graph)[vertex].visits) / (LimitedMemoryMCTS<vertex_properties>::graph)[target].visits);
+
+        if (new_value > max_value) {
+            max_value = new_value;
+            best = target;
+        }
+    }
+
+    return best;
+}
+
+template<typename vertex_properties>
+bool LimitedMemoryMCTS<vertex_properties>::has_unborn(LimitedMemoryMCTS<vertex_properties>::vertex_t vertex) {
+    return LimitedMemoryMCTS<vertex_properties>::graph[vertex].num_possible_moves() == boost::out_degree(vertex, LimitedMemoryMCTS<vertex_properties>::graph);
+}
+
+template<typename vertex_properties>
+typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex_properties>::select(LimitedMemoryMCTS<vertex_properties>::vertex_t vertex) {
+    while (boost::out_degree(vertex, LimitedMemoryMCTS<vertex_properties>::graph) && !LimitedMemoryMCTS<vertex_properties>::has_unborn(vertex)) {
+        vertex = LimitedMemoryMCTS<vertex_properties>::select_child(vertex);
+    }
+
+    return vertex;
+}
+
+template<typename vertex_properties>
+typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex_properties>::get_parent(LimitedMemoryMCTS<vertex_properties>::vertex_t vertex) {
+    LimitedMemoryMCTS<vertex_properties>::in_edge_iterator in_begin, in_end;
+    
+    for (boost::tie(in_begin, in_end) = boost::in_edges(vertex, LimitedMemoryMCTS<vertex_properties>::graph); in_begin != in_end; ++in_begin) {
+        return boost::source(*in_begin, LimitedMemoryMCTS<vertex_properties>::graph);
+    }
+}
+
+/** Add child and return it. */
+template<typename vertex_properties>
+typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex_properties>::add_child(LimitedMemoryMCTS<vertex_properties>::vertex_t vertex) {
+    vertex_properties vp = LimitedMemoryMCTS<vertex_properties>::graph[vertex].generate_child();
+    LimitedMemoryMCTS<vertex_properties>::vertex_t child = add_vertex(vp, LimitedMemoryMCTS<vertex_properties>::graph); // Add node and return the vertex descriptor
+
+    add_edge(vertex, child, LimitedMemoryMCTS<vertex_properties>::graph);
+
+    return child;
+}
+
+template<typename vertex_properties>
+bool LimitedMemoryMCTS<vertex_properties>::is_leaf(LimitedMemoryMCTS<vertex_properties>::vertex_t vertex) {
+    return !boost::in_degree(vertex, LimitedMemoryMCTS<vertex_properties>::graph) || !boost::out_degree(vertex, LimitedMemoryMCTS<vertex_properties>::graph);
+}
+
+template<typename vertex_properties>
+std::list<typename LimitedMemoryMCTS<vertex_properties>::vertex_t> LimitedMemoryMCTS<vertex_properties>::delete_branch(LimitedMemoryMCTS<vertex_properties>::vertex_t vertex) { // recursively delete all descendant nodes and itself
+    std::list<LimitedMemoryMCTS<vertex_properties>::vertex_t> garbage;
+    LimitedMemoryMCTS<vertex_properties>::out_edge_iterator ei, ei_end;
+    for (boost::tie(ei, ei_end) = boost::out_edges(vertex, (LimitedMemoryMCTS<vertex_properties>::graph)); ei != ei_end; ++ei) {
+        LimitedMemoryMCTS<vertex_properties>::vertex_t target = boost::target(*ei, LimitedMemoryMCTS<vertex_properties>::graph);
+        garbage.merge(LimitedMemoryMCTS<vertex_properties>::delete_branch(target));
+    }
+
+    garbage.push_back(vertex);
+
+    return garbage;
+}
+
+template<typename vertex_properties>
+typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex_properties>::root_changeover(LimitedMemoryMCTS<vertex_properties>::vertex_t chosen) {
+    // Make the play the new root by first removing all irrelevant branches
+    std::list<LimitedMemoryMCTS<vertex_properties>::vertex_t> garbage;
+    LimitedMemoryMCTS<vertex_properties>::out_edge_iterator ei, ei_end;
+    LimitedMemoryMCTS<vertex_properties>::vertex_t root = LimitedMemoryMCTS<vertex_properties>::get_root();
+    for (boost::tie(ei, ei_end) = boost::out_edges(root, LimitedMemoryMCTS<vertex_properties>::graph); ei != ei_end; ++ei) {
+        LimitedMemoryMCTS<vertex_properties>::vertex_t target = boost::target(*ei, LimitedMemoryMCTS<vertex_properties>::graph);
+        if (target != chosen) {
+            garbage.merge(LimitedMemoryMCTS<vertex_properties>::delete_branch(target));
+        }
+    }
+
+    for (LimitedMemoryMCTS<vertex_properties>::vertex_t to_remove : garbage) {
+        boost::clear_vertex(to_remove, LimitedMemoryMCTS<vertex_properties>::graph);
+        boost::remove_vertex(to_remove, LimitedMemoryMCTS<vertex_properties>::graph);
+    }
+
+    boost::clear_vertex(root, LimitedMemoryMCTS<vertex_properties>::graph); // Remove old root. Remove all edges otherwise undefined behaviour occurs after remove_vertex
+    boost::remove_vertex(root, LimitedMemoryMCTS<vertex_properties>::graph);
+}
+
+template<typename vertex_properties>
+std::list<vertex_properties> LimitedMemoryMCTS<vertex_properties>::get_children(LimitedMemoryMCTS<vertex_properties>::vertex_t vertex) {
+    std::list<vertex_properties> children;
+    LimitedMemoryMCTS<vertex_properties>::out_edge_iterator ei, ei_end;
+    for (boost::tie(ei, ei_end) = boost::out_edges(vertex, LimitedMemoryMCTS<vertex_properties>::graph); ei != ei_end; ++ei) {
+        children.push_back(LimitedMemoryMCTS<vertex_properties>::graph[boost::target(*ei, LimitedMemoryMCTS<vertex_properties>::graph)]);
+    }
+
+    return children;
+}
+
+template<typename vertex_properties>
+typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex_properties>::make_best_play() {
+    LimitedMemoryMCTS<vertex_properties>::vertex_t root = LimitedMemoryMCTS<vertex_properties>::get_root();
+    float max_value = -1;
+    float new_value;
+    int best_index = 0;
+    int i = 0;
+    LimitedMemoryMCTS<vertex_properties>::vertex_t best;
+    LimitedMemoryMCTS<vertex_properties>::out_edge_iterator ei, ei_end;
+
+    // Calculate best play
+    for (boost::tie(ei, ei_end) = boost::out_edges(root, LimitedMemoryMCTS<vertex_properties>::graph); ei != ei_end; ++ei) {
+        LimitedMemoryMCTS<vertex_properties>::vertex_t target = boost::target(*ei, LimitedMemoryMCTS<vertex_properties>::graph);
+
+        new_value = LimitedMemoryMCTS<vertex_properties>::graph[target].wins / LimitedMemoryMCTS<vertex_properties>::graph[target].visits;
+
+        if (new_value > max_value) {
+            max_value = new_value;
+            best = target;
+            best_index = i;
+        }
+        i++;
+    }
+
+    return best;
+}
+
+template<typename vertex_properties>
+int LimitedMemoryMCTS<vertex_properties>::terminal(LimitedMemoryMCTS<vertex_properties>::vertex_t vertex) {
+    return LimitedMemoryMCTS<vertex_properties>::graph[vertex].terminal();
+}
+
+template<typename vertex_properties>
+int LimitedMemoryMCTS<vertex_properties>::simulate(LimitedMemoryMCTS<vertex_properties>::vertex_t vertex) {
+    return LimitedMemoryMCTS<vertex_properties>::graph[vertex].playout();
+}
+
+template<typename vertex_properties>
+void LimitedMemoryMCTS<vertex_properties>::backpropagate(LimitedMemoryMCTS<vertex_properties>::vertex_t vertex, int result) {
+    std::list<LimitedMemoryMCTS<vertex_properties>::vertex_t> path;
+    while (boost::in_degree(vertex, LimitedMemoryMCTS<vertex_properties>::graph)) { // While we are not at the root
+        path.push_front(vertex);
+        if (result == player.x) {
+            LimitedMemoryMCTS<vertex_properties>::graph[vertex].wins += 1;
+        } else if (result == 3) {
+            LimitedMemoryMCTS<vertex_properties>::graph[vertex].wins += 0.5;
+        }
+        LimitedMemoryMCTS<vertex_properties>::graph[vertex].visits++;
+        player.x = player.x ^ 3; // Switch player
+        vertex = LimitedMemoryMCTS<vertex_properties>::get_parent(vertex);
+    }
+    // Update the root node
+    if (result == player.x) {
+        LimitedMemoryMCTS<vertex_properties>::graph[vertex].wins += 1;
+    } else if (result == 3) {
+        LimitedMemoryMCTS<vertex_properties>::graph[vertex].wins += 0.5;
+    }    
+    LimitedMemoryMCTS<vertex_properties>::graph[vertex].visits += 1;
+}
+
+template<typename vertex_properties>
+LimitedMemoryMCTS<vertex_properties>::Graph LimitedMemoryMCTS<vertex_properties>::get_graph() {
+    return LimitedMemoryMCTS<vertex_properties>::graph;
+}
+
+template<typename vertex_properties>
+vertex_properties LimitedMemoryMCTS<vertex_properties>::get_vertex_properties(LimitedMemoryMCTS<vertex_properties>::vertex_t vertex) {
+    return LimitedMemoryMCTS<vertex_properties>::graph[vertex];
+}
+
+template<typename vertex_properties>
+typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex_properties>::make_play(LimitedMemoryMCTS<vertex_properties>::vertex_t root, vertex_properties vp) {
+    int options[9];
+    int numOptions = 0;
+    for (int i = 0; i < 9; i++) { // Find all the possible children of the parent
+        if (!parentBoard.spots[i].x) {
+            options[numOptions++] = i;
+        }
+        if (i == action) {
+            break;
+        }
+    }
+
+    MCTS::vertex_t target;
+    int numCurrentChildren = boost::out_degree(root, *graph);
+    if (numOptions <= numCurrentChildren) {
+        int childIndex = 0;
+        MCTS::out_edge_iterator ei, ei_end;
+        for (boost::tie(ei, ei_end) = boost::out_edges(root, *graph); ei != ei_end; ++ei) {
+            if (childIndex++ == numOptions - 1) { // If this is the right child, set the childIndex
+                target = boost::target(*ei, *graph);
+                break;
+            }
+        }
+    } else {
+        for (int i = 0; i < numOptions - numCurrentChildren; i++) {
+            VertexProperties childProperties{.wins = 0, .visits = 0};
+            target = add_vertex(childProperties, (*graph));
+
+            add_edge(root, target, (*graph));
+        }
+    }
+
+    return target;
+}
+
+/* Game stuff */
 
 typedef struct {
     unsigned x:2; // 0 = nothing, 1 = X, 2 = O
@@ -18,14 +307,30 @@ typedef struct {
 
 class VertexProperties {
     public:
-        Board state;
+        VertexProperties(Board state_stored, Spot last_player);
 
-        // Needed for MCTS interface
         bool has_state;
+        Board state;
+        Spot player;
+
+    public: // Needed for MCTS interface
         float wins;
         int visits;
+
         int num_possible_moves();
+        int terminal();
+        VertexProperties generate_child(std::list<VertexProperties> existing_plays);
+        int playout();
+        bool equals(VertexProperties vp1, VertexProperties vp2);
 };
+
+VertexProperties::VertexProperties(Board state_stored, Spot last_player) {
+    state = state_stored;
+    player = last_player;
+    has_state = true;
+    wins = 0;
+    visits = 0;
+}
 
 
 int VertexProperties::num_possible_moves() {
@@ -38,7 +343,128 @@ int VertexProperties::num_possible_moves() {
     return num_moves;
 }
 
-Board rootBoard;
+VertexProperties VertexProperties::generate_child(std::list<VertexProperties> existing_plays) {
+    int plays[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+    for (std::list<VertexProperties>::iterator it = existing_plays.begin(); it != existing_plays.end(); ++it) {
+        for (int j = 0; j < 9; j++) {
+            if ((*it).state.spots[j].x) {
+                plays[j] = (*it).state.spots[j].x;
+            }
+        }
+    }
+
+    int num_plays = 0;
+    for (int i = 0; i < 9; i++) {
+        if (!plays[i]) {
+            plays[num_plays++] = i;
+        }
+    }
+    int chosen_play = plays[rand() % num_plays];
+
+    Board new_state = state;
+
+    if (num_plays % 2 == 0) {
+        new_state.spots[chosen_play].x = 2;
+        return VertexProperties(new_state, Spot{2});
+    } else {
+        new_state.spots[chosen_play].x = 1;
+        return VertexProperties(new_state, Spot{1});
+    }
+}
+
+bool VertexProperties::equals(VertexProperties vp1, VertexProperties vp2) {
+    return vp1.state.spots[0].x == vp2.state.spots[0].x &&
+           vp1.state.spots[1].x == vp2.state.spots[1].x &&
+           vp1.state.spots[2].x == vp2.state.spots[2].x &&
+           vp1.state.spots[3].x == vp2.state.spots[3].x &&
+           vp1.state.spots[4].x == vp2.state.spots[4].x &&
+           vp1.state.spots[5].x == vp2.state.spots[5].x &&
+           vp1.state.spots[6].x == vp2.state.spots[6].x &&
+           vp1.state.spots[7].x == vp2.state.spots[7].x &&
+           vp1.state.spots[8].x == vp2.state.spots[8].x;
+}
+
+Board simulate(Board board, Spot player) {
+    Board options[9];
+    int numOptions = 0;
+
+    for (int i = 0; i < 9; i++) {
+        if (!board.spots[i].x) {
+            options[numOptions] = board;
+            options[numOptions++].spots[i].x = player.x;
+        }
+    }
+
+    return options[rand() % numOptions];
+}
+
+int no_moves_left(Board board) {
+    return board.spots[0].x && board.spots[1].x && board.spots[2].x && board.spots[3].x && board.spots[4].x && 
+            board.spots[5].x && board.spots[6].x && board.spots[7].x && board.spots[8].x;
+}
+
+/** Return whether tic-tac-toe state is gameover and if so, who won. 0 = not gameover, 1 = X, 2 = O, 3 = draw */
+int terminal_board(Board state) {
+    if (state.spots[0].x && state.spots[0].x == state.spots[1].x && state.spots[1].x == state.spots[2].x) {
+        return state.spots[0].x;
+    } else if (state.spots[3].x && state.spots[3].x == state.spots[4].x && state.spots[4].x == state.spots[5].x) {
+        return state.spots[3].x;
+    } else if (state.spots[6].x && state.spots[6].x == state.spots[7].x && state.spots[7].x == state.spots[8].x) {
+        return state.spots[6].x;
+    } else if (state.spots[0].x && state.spots[0].x == state.spots[3].x && state.spots[3].x == state.spots[6].x) {
+        return state.spots[0].x;
+    } else if (state.spots[1].x && state.spots[1].x == state.spots[4].x && state.spots[4].x == state.spots[7].x) {
+        return state.spots[1].x;
+    } else if (state.spots[2].x && state.spots[2].x == state.spots[5].x && state.spots[5].x == state.spots[8].x) {
+        return state.spots[2].x;
+    } else if (state.spots[0].x && state.spots[0].x == state.spots[4].x && state.spots[4].x == state.spots[8].x) {
+        return state.spots[0].x;
+    } else if (state.spots[2].x && state.spots[2].x == state.spots[4].x && state.spots[4].x == state.spots[6].x) {
+        return state.spots[2].x;
+    } else if (no_moves_left(state)) {
+        return 3;
+    }
+    return 0;
+}
+
+int VertexProperties::playout() {
+    int term;
+    Board currentBoard = state;
+    Spot currentPlayer = player;
+    
+    while (!(term = terminal_board(currentBoard))) {
+        currentBoard = simulate(currentBoard, currentPlayer);
+        currentPlayer.x ^= 3;
+    }
+
+    return term;
+}
+
+typedef LimitedMemoryMCTS<VertexProperties> MCTS;
+
+/** Return whether tic-tac-toe state is gameover and if so, who won. 0 = not gameover, 1 = X, 2 = O, 3 = draw */
+int VertexProperties::terminal() {
+    if (state.spots[0].x && state.spots[0].x == state.spots[1].x && state.spots[1].x == state.spots[2].x) {
+        return state.spots[0].x;
+    } else if (state.spots[3].x && state.spots[3].x == state.spots[4].x && state.spots[4].x == state.spots[5].x) {
+        return state.spots[3].x;
+    } else if (state.spots[6].x && state.spots[6].x == state.spots[7].x && state.spots[7].x == state.spots[8].x) {
+        return state.spots[6].x;
+    } else if (state.spots[0].x && state.spots[0].x == state.spots[3].x && state.spots[3].x == state.spots[6].x) {
+        return state.spots[0].x;
+    } else if (state.spots[1].x && state.spots[1].x == state.spots[4].x && state.spots[4].x == state.spots[7].x) {
+        return state.spots[1].x;
+    } else if (state.spots[2].x && state.spots[2].x == state.spots[5].x && state.spots[5].x == state.spots[8].x) {
+        return state.spots[2].x;
+    } else if (state.spots[0].x && state.spots[0].x == state.spots[4].x && state.spots[4].x == state.spots[8].x) {
+        return state.spots[0].x;
+    } else if (state.spots[2].x && state.spots[2].x == state.spots[4].x && state.spots[4].x == state.spots[6].x) {
+        return state.spots[2].x;
+    } else if (no_moves_left(state)) {
+        return 3;
+    }
+    return 0;
+}
 
 char get_spot(Spot spot) {
     if (spot.x == 1) {
@@ -58,35 +484,6 @@ std::string print_board(Board board) {
     return ss.str();
 }
 
-int no_moves_left(Board* board) {
-    return board->spots[0].x && board->spots[1].x && board->spots[2].x && board->spots[3].x && board->spots[4].x && 
-            board->spots[5].x && board->spots[6].x && board->spots[7].x && board->spots[8].x;
-}
-
-/** Return whether tic-tac-toe state is gameover and if so, who won. 0 = not gameover, 1 = X, 2 = O, 3 = draw */
-int terminal(Board* board) {
-    if (board->spots[0].x && board->spots[0].x == board->spots[1].x && board->spots[1].x == board->spots[2].x) {
-        return board->spots[0].x;
-    } else if (board->spots[3].x && board->spots[3].x == board->spots[4].x && board->spots[4].x == board->spots[5].x) {
-        return board->spots[3].x;
-    } else if (board->spots[6].x && board->spots[6].x == board->spots[7].x && board->spots[7].x == board->spots[8].x) {
-        return board->spots[6].x;
-    } else if (board->spots[0].x && board->spots[0].x == board->spots[3].x && board->spots[3].x == board->spots[6].x) {
-        return board->spots[0].x;
-    } else if (board->spots[1].x && board->spots[1].x == board->spots[4].x && board->spots[4].x == board->spots[7].x) {
-        return board->spots[1].x;
-    } else if (board->spots[2].x && board->spots[2].x == board->spots[5].x && board->spots[5].x == board->spots[8].x) {
-        return board->spots[2].x;
-    } else if (board->spots[0].x && board->spots[0].x == board->spots[4].x && board->spots[4].x == board->spots[8].x) {
-        return board->spots[0].x;
-    } else if (board->spots[2].x && board->spots[2].x == board->spots[4].x && board->spots[4].x == board->spots[6].x) {
-        return board->spots[2].x;
-    } else if (no_moves_left(board)) {
-        return 3;
-    }
-    return 0;
-}
-
 bool same_board(Board board1, Board board2) {
     for (int i = 0; i < 9; i++) {
         if (board1.spots[i].x != board2.spots[i].x) {
@@ -96,21 +493,7 @@ bool same_board(Board board1, Board board2) {
     return true;
 }
 
-Board simulate(Board* board, Spot player) {
-    Board options[9];
-    int numOptions = 0;
-
-    for (int i = 0; i < 9; i++) {
-        if (!board->spots[i].x) {
-            options[numOptions] = *board;
-            options[numOptions++].spots[i].x = player.x;
-        }
-    }
-
-    return options[rand() % numOptions];
-}
-
-int get_play(Board parentBoard, LimitedMemoryMCTS<VertexProperties>::vertex_t vertex, LimitedMemoryMCTS<VertexProperties>::Graph* graph) {
+int get_play(Board parentBoard, MCTS::vertex_t vertex, MCTS::Graph* graph) {
     int options[9];
     int numOptions = 0;
     for (int i = 0; i < 9; i++) { // Find all the possible children of the parent
@@ -122,8 +505,8 @@ int get_play(Board parentBoard, LimitedMemoryMCTS<VertexProperties>::vertex_t ve
     // printf("%d %d\n", boost::out_degree(get_parent(vertex, graph), *graph), boost::out_degree(vertex, *graph));
 
     int childIndex = 0;
-    LimitedMemoryMCTS<VertexProperties>::out_edge_iterator ei, ei_end;
-    for (boost::tie(ei, ei_end) = boost::out_edges(LimitedMemoryMCTS<VertexProperties>::get_parent(vertex, graph), *graph); ei != ei_end; ++ei) {
+    MCTS::out_edge_iterator ei, ei_end;
+    for (boost::tie(ei, ei_end) = boost::out_edges(MCTS::get_parent(vertex, graph), *graph); ei != ei_end; ++ei) {
         if (vertex == boost::target(*ei, *graph)) { // If this is the right child, set the childIndex
             break;
         }
@@ -133,31 +516,9 @@ int get_play(Board parentBoard, LimitedMemoryMCTS<VertexProperties>::vertex_t ve
     return options[childIndex]; // Return the child's action
 }
 
-Board make_play(Board board, LimitedMemoryMCTS<VertexProperties>::vertex_t vertex, LimitedMemoryMCTS<VertexProperties>::Graph* graph, Spot player) {
+Board make_play(Board board, MCTS::vertex_t vertex, Spot player) {
     board.spots[get_play(board, vertex, graph)].x = player.x;
     return board;
-}
-
-void backpropagate(LimitedMemoryMCTS<VertexProperties>::vertex_t vertex, LimitedMemoryMCTS<VertexProperties>::Graph* graph, int result, Spot player) {
-    std::list<LimitedMemoryMCTS<VertexProperties>::vertex_t> path;
-    while (boost::in_degree(vertex, *graph)) { // While we are not at the root
-        path.push_front(vertex);
-        if (result == player.x) {
-            (*graph)[vertex].wins += 1;
-        } else if (result == 3) {
-            (*graph)[vertex].wins += 0.5;
-        }
-        (*graph)[vertex].visits++;
-        player.x = player.x ^ 3; // Switch player
-        vertex = LimitedMemoryMCTS<VertexProperties>::get_parent(vertex, graph);
-    }
-    // Update the root node
-    if (result == player.x) {
-        (*graph)[vertex].wins += 1;
-    } else if (result == 3) {
-        (*graph)[vertex].wins += 0.5;
-    }    
-    (*graph)[vertex].visits += 1;
 }
 
 Spot who_played(Board state) {
@@ -190,18 +551,18 @@ struct my_node_writer {
     my_node_writer(Map& g_) : g (g_) {};
     template <class Vertex>
     void operator()(std::ostream& out, Vertex v) {
-        std::list<LimitedMemoryMCTS<VertexProperties>::vertex_t> path;
+        std::list<MCTS::vertex_t> path;
         int player = 2;
-        LimitedMemoryMCTS<VertexProperties>::vertex_t vertex = v;
+        MCTS::vertex_t vertex = v;
         Board board = rootBoard;
 
         while (boost::in_degree(vertex, g)) { // While we are not at the root
             path.push_front(vertex);
-            vertex = LimitedMemoryMCTS<VertexProperties>::get_parent(vertex, &g);
+            vertex = MCTS::get_parent(vertex, &g);
         }
 
-        LimitedMemoryMCTS<VertexProperties>::vertex_t parent = vertex;
-        for (LimitedMemoryMCTS<VertexProperties>::vertex_t testVertex : path) {
+        MCTS::vertex_t parent = vertex;
+        for (MCTS::vertex_t testVertex : path) {
             player = player ^ 3;
             board = make_play(board, testVertex, &g, Spot{(unsigned int) player});
             parent = testVertex;
@@ -229,7 +590,7 @@ struct my_edge_writer {
     my_edge_writer(Map& g_) : g (g_) {};
     template <class Edge>
     void operator()(std::ostream& out, Edge e) {
-        LimitedMemoryMCTS<VertexProperties>::vertex_t pointing_at = boost::target(e, g);
+        MCTS::vertex_t pointing_at = boost::target(e, g);
         out << " [label=\""<< g[pointing_at].wins / g[pointing_at].visits << "\"]" << std::endl;
     };
     Map g;
@@ -240,9 +601,9 @@ my_edge_writer<Map> edge_writer(Map& map) {
     return my_edge_writer<Map>(map); 
 }
 
-void write_dot(LimitedMemoryMCTS<VertexProperties>::Graph* graph, int write_iteration) {
+void write_dot(MCTS::Graph* graph, int write_iteration) {
     // Make ID map
-    std::map<LimitedMemoryMCTS<VertexProperties>::vertex_t, size_t> ids;
+    std::map<MCTS::vertex_t, size_t> ids;
 
     for (auto u : boost::make_iterator_range(boost::vertices(*graph))) {
         ids[u] = ids.size();
@@ -259,94 +620,50 @@ void write_dot(LimitedMemoryMCTS<VertexProperties>::Graph* graph, int write_iter
     myfile.close();
 }
 
-LimitedMemoryMCTS<VertexProperties>::vertex_t make_human_play(Board parentBoard, LimitedMemoryMCTS<VertexProperties>::vertex_t root, LimitedMemoryMCTS<VertexProperties>::Graph* graph, unsigned int action) {
-    int options[9];
-    int numOptions = 0;
-    for (int i = 0; i < 9; i++) { // Find all the possible children of the parent
-        if (!parentBoard.spots[i].x) {
-            options[numOptions++] = i;
-        }
-        if (i == action) {
-            break;
-        }
-    }
-
-    LimitedMemoryMCTS<VertexProperties>::vertex_t target;
-    int numCurrentChildren = boost::out_degree(root, *graph);
-    if (numOptions <= numCurrentChildren) {
-        int childIndex = 0;
-        LimitedMemoryMCTS<VertexProperties>::out_edge_iterator ei, ei_end;
-        for (boost::tie(ei, ei_end) = boost::out_edges(root, *graph); ei != ei_end; ++ei) {
-            if (childIndex++ == numOptions - 1) { // If this is the right child, set the childIndex
-                target = boost::target(*ei, *graph);
-                break;
-            }
-        }
-    } else {
-        for (int i = 0; i < numOptions - numCurrentChildren; i++) {
-            VertexProperties childProperties{.wins = 0, .visits = 0};
-            target = add_vertex(childProperties, (*graph));
-
-            add_edge(root, target, (*graph));
-        }
-    }
-
-    return target;
-}
-
 int main() {
+    int write_iteration = 0;
+    
     std::srand(time(NULL));
 
-    int write_iteration = 0;
-
-    rootBoard = Board{0};
-
-    LimitedMemoryMCTS<VertexProperties>::vertex_t vertex = LimitedMemoryMCTS<VertexProperties>::add_vertex(VertexProperties{.wins = 0, .visits = 0}); // Add root node
+    MCTS::vertex_t vertex = MCTS::add_vertex(VertexProperties(Board{0}, Spot{2})); // Add root node
 
     while (1) {
         int term;
 
          // MCTS iterations
         for (int it = 0; it < ITERATIONS; it++) {
-            Board currentBoard = rootBoard;
-
-            vertex = LimitedMemoryMCTS<VertexProperties>::get_root();
-            Spot player = {1}; // Start with AI player
+            vertex = MCTS::get_root();
 
             // Select
-            LimitedMemoryMCTS<VertexProperties>::select(vertex);
+            vertex = MCTS::select(vertex);
 
-            // Expand
-            if (!(term = terminal(&currentBoard))) {
-                if (has_unborn(currentBoard, vertex, &graph)) {
-                    vertex = LimitedMemoryMCTS<VertexProperties>::add_child(vertex, VertexProperties{.wins=0, .visits=0});
-                    currentBoard = make_play(currentBoard, vertex, &graph, player);
-                    player.x = player.x ^ 3; // Switch player
+            // If not terminal
+            if (!(term = MCTS::terminal(vertex))) {
+                // Expand
+                if (MCTS::has_unborn(vertex)) {
+                    vertex = MCTS::add_child(vertex);
                 }
 
                 // Simulate
-                Board simBoard = currentBoard;
-                while (!(term = terminal(&simBoard))) {
-                    simBoard = simulate(&simBoard, player);
-                    player.x = player.x ^ 3; // Switch player
+                if (!(term = MCTS::terminal(vertex))) {
+                    term = MCTS::simulate(vertex);
                 }
             }
 
             // Backpropagate
-            player.x = player.x ^ 3; // Switch player
-            backpropagate(vertex, &graph, term, player);
+            MCTS::backpropagate(vertex, term);
         }
         
-        write_dot(&graph, write_iteration++);
+        write_dot(&MCTS::get_graph(), write_iteration++);
 
-        vertex = LimitedMemoryMCTS<VertexProperties>::make_best_play(&graph);
-        rootBoard = make_play(rootBoard, vertex, &graph, Spot{1});
-        LimitedMemoryMCTS<VertexProperties>::root_changeover(vertex, &graph);
+        vertex = MCTS::make_best_play();
+        Board rootBoard = MCTS::get_vertex_properties(vertex).state;
+        MCTS::root_changeover(vertex);
 
         std::cout << print_board(rootBoard);
         std::cout.flush();
 
-        term = terminal(&rootBoard);
+        term = MCTS::terminal(vertex);
 
         if (term == 1) {
             printf("\nGame over! AI wins\n");
@@ -364,16 +681,19 @@ int main() {
             humanPlay = std::cin.get() - 48;
             while ((ch = std::cin.get()) != '\n' && ch != EOF);
             printf("\n");
-            if (rootBoard.spots[humanPlay].x || humanPlay > 8 || humanPlay < 0) {
+            if (humanPlay > 8 || humanPlay < 0 || rootBoard.spots[humanPlay].x) {
                 printf("Cannot make play. Enter play: ");
             } else {
                 break;
             }
         }
 
-        vertex = make_human_play(rootBoard, vertex, &graph, humanPlay);
-        rootBoard = make_play(rootBoard, vertex, &graph, Spot{2});
-        LimitedMemoryMCTS<VertexProperties>::root_changeover(vertex, &graph);
+        rootBoard.spots[humanPlay].x = 2;
+
+        
+
+        vertex = make_human_play(vertex, VertexProperties(rootBoard, Spot{2}));
+        MCTS::root_changeover(vertex);
 
         std::cout << print_board(rootBoard);
         std::cout.flush();
