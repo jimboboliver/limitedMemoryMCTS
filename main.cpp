@@ -326,7 +326,6 @@ VertexProperties::VertexProperties(Board state_stored, Spot last_player) {
     visits = 0;
 }
 
-
 int VertexProperties::num_possible_moves() {
     int num_moves = 0;
     for (int i = 0; i < 9; i++) {
@@ -684,9 +683,7 @@ int main() {
 
         rootBoard.spots[humanPlay].x = 2;
 
-        
-
-        vertex = make_human_play(vertex, VertexProperties(rootBoard, Spot{2}));
+        vertex = MCTS::make_play(vertex, VertexProperties(rootBoard, Spot{2}));
         MCTS::root_changeover(vertex);
 
         std::cout << print_board(rootBoard);
@@ -694,7 +691,7 @@ int main() {
 
         printf("\n");
 
-        term = terminal(&rootBoard);
+        term = terminal_board(rootBoard);
 
         if (term == 2) {
             printf("\nGame over! Player wins\n");
