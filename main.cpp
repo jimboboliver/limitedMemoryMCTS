@@ -110,7 +110,7 @@ typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex
 
 template<typename vertex_properties>
 bool LimitedMemoryMCTS<vertex_properties>::has_unborn(LimitedMemoryMCTS<vertex_properties>::vertex_t vertex) {
-    return LimitedMemoryMCTS<vertex_properties>::graph[vertex].num_possible_moves() == boost::out_degree(vertex, LimitedMemoryMCTS<vertex_properties>::graph);
+    return LimitedMemoryMCTS<vertex_properties>::graph[vertex].num_possible_moves() != boost::out_degree(vertex, LimitedMemoryMCTS<vertex_properties>::graph);
 }
 
 template<typename vertex_properties>
@@ -259,13 +259,6 @@ void LimitedMemoryMCTS<vertex_properties>::backpropagate(LimitedMemoryMCTS<verte
         LimitedMemoryMCTS<vertex_properties>::graph[*it].visits += 1;
         player ^= 3; // Switch player
     }
-    // Update the root node
-    if (result == 2) {
-        LimitedMemoryMCTS<vertex_properties>::graph[vertex].wins += 1;
-    } else if (result == 3) {
-        LimitedMemoryMCTS<vertex_properties>::graph[vertex].wins += 0.5;
-    }
-    LimitedMemoryMCTS<vertex_properties>::graph[vertex].visits += 1;
 }
 
 template<typename vertex_properties>
@@ -345,7 +338,7 @@ VertexProperties::VertexProperties(Board state_stored, Spot last_player) {
 unsigned int VertexProperties::num_possible_moves() {
     unsigned int num_moves = 0;
     for (int i = 0; i < 9; i++) {
-        if (!VertexProperties::state.spots[i].x) { // If the spot is empty it's a possible move
+        if (!state.spots[i].x) { // If the spot is empty it's a possible move
             num_moves++;
         }
     }
