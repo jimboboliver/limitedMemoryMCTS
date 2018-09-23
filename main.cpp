@@ -78,12 +78,12 @@ typename LimitedMemoryMCTS<vertex_properties>::Graph LimitedMemoryMCTS<vertex_pr
 
 template<typename vertex_properties>
 typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex_properties>::add_vertex(vertex_properties vp) {
-    return boost::add_vertex(vp, LimitedMemoryMCTS<vertex_properties>::graph);
+    return boost::add_vertex(vp, graph);
 }
 
 template<typename vertex_properties>
 typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex_properties>::get_root() {
-    std::pair<vertex_iterator, vertex_iterator> it = boost::vertices(LimitedMemoryMCTS<vertex_properties>::graph);
+    std::pair<vertex_iterator, vertex_iterator> it = boost::vertices(graph);
     return *it.first;
 }
 
@@ -91,13 +91,13 @@ template<typename vertex_properties>
 typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex_properties>::select_child(LimitedMemoryMCTS<vertex_properties>::vertex_t vertex) {
     float max_value = 0;
     float new_value;
-    LimitedMemoryMCTS<vertex_properties>::vertex_t best;
-    LimitedMemoryMCTS<vertex_properties>::out_edge_iterator ei, ei_end;
+    vertex_t best;
+    out_edge_iterator ei, ei_end;
 
-    for (boost::tie(ei, ei_end) = boost::out_edges(vertex, (LimitedMemoryMCTS<vertex_properties>::graph)); ei != ei_end; ++ei) {
-        LimitedMemoryMCTS<vertex_properties>::vertex_t target = boost::target(*ei, LimitedMemoryMCTS<vertex_properties>::graph);
+    for (boost::tie(ei, ei_end) = boost::out_edges(vertex, (graph)); ei != ei_end; ++ei) {
+        vertex_t target = boost::target(*ei, graph);
 
-        new_value = (LimitedMemoryMCTS<vertex_properties>::graph)[target].wins / (LimitedMemoryMCTS<vertex_properties>::graph)[target].visits + sqrt(2 * log((LimitedMemoryMCTS<vertex_properties>::graph)[vertex].visits) / (LimitedMemoryMCTS<vertex_properties>::graph)[target].visits);
+        new_value = (graph)[target].wins / (graph)[target].visits + sqrt(2 * log((graph)[vertex].visits) / (graph)[target].visits);
 
         if (new_value > max_value) {
             max_value = new_value;
@@ -110,13 +110,13 @@ typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex
 
 template<typename vertex_properties>
 bool LimitedMemoryMCTS<vertex_properties>::has_unborn(LimitedMemoryMCTS<vertex_properties>::vertex_t vertex) {
-    return LimitedMemoryMCTS<vertex_properties>::graph[vertex].num_possible_moves() != boost::out_degree(vertex, LimitedMemoryMCTS<vertex_properties>::graph);
+    return graph[vertex].num_possible_moves() != boost::out_degree(vertex, graph);
 }
 
 template<typename vertex_properties>
 typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex_properties>::select(LimitedMemoryMCTS<vertex_properties>::vertex_t vertex) {
-    while (boost::out_degree(vertex, LimitedMemoryMCTS<vertex_properties>::graph) && !LimitedMemoryMCTS<vertex_properties>::has_unborn(vertex)) {
-        vertex = LimitedMemoryMCTS<vertex_properties>::select_child(vertex);
+    while (boost::out_degree(vertex, graph) && !has_unborn(vertex)) {
+        vertex = select_child(vertex);
     }
 
     return vertex;
@@ -124,10 +124,10 @@ typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex
 
 template<typename vertex_properties>
 typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex_properties>::get_parent(LimitedMemoryMCTS<vertex_properties>::vertex_t vertex) {
-    LimitedMemoryMCTS<vertex_properties>::in_edge_iterator in_begin, in_end;
+    in_edge_iterator in_begin, in_end;
     
-    for (boost::tie(in_begin, in_end) = boost::in_edges(vertex, LimitedMemoryMCTS<vertex_properties>::graph); in_begin != in_end; ++in_begin) {
-        return boost::source(*in_begin, LimitedMemoryMCTS<vertex_properties>::graph);
+    for (boost::tie(in_begin, in_end) = boost::in_edges(vertex, graph); in_begin != in_end; ++in_begin) {
+        return boost::source(*in_begin, graph);
     }
     return vertex;
 }
@@ -135,26 +135,26 @@ typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex
 /** Add child and return it. */
 template<typename vertex_properties>
 typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex_properties>::add_child(LimitedMemoryMCTS<vertex_properties>::vertex_t vertex) {
-    vertex_properties vp = LimitedMemoryMCTS<vertex_properties>::graph[vertex].generate_child(LimitedMemoryMCTS<vertex_properties>::get_child_properties(vertex));
-    LimitedMemoryMCTS<vertex_properties>::vertex_t child = boost::add_vertex(vp, LimitedMemoryMCTS<vertex_properties>::graph); // Add node and return the vertex descriptor
+    vertex_properties vp = graph[vertex].generate_child(get_child_properties(vertex));
+    vertex_t child = boost::add_vertex(vp, graph); // Add node and return the vertex descriptor
 
-    boost::add_edge(vertex, child, LimitedMemoryMCTS<vertex_properties>::graph);
+    boost::add_edge(vertex, child, graph);
 
     return child;
 }
 
 template<typename vertex_properties>
 bool LimitedMemoryMCTS<vertex_properties>::is_leaf(LimitedMemoryMCTS<vertex_properties>::vertex_t vertex) {
-    return !boost::in_degree(vertex, LimitedMemoryMCTS<vertex_properties>::graph) || !boost::out_degree(vertex, LimitedMemoryMCTS<vertex_properties>::graph);
+    return !boost::in_degree(vertex, graph) || !boost::out_degree(vertex, graph);
 }
 
 template<typename vertex_properties>
 std::list<typename LimitedMemoryMCTS<vertex_properties>::vertex_t> LimitedMemoryMCTS<vertex_properties>::delete_branch(LimitedMemoryMCTS<vertex_properties>::vertex_t vertex) { // recursively delete all descendant nodes and itself
-    std::list<LimitedMemoryMCTS<vertex_properties>::vertex_t> garbage;
-    LimitedMemoryMCTS<vertex_properties>::out_edge_iterator ei, ei_end;
-    for (boost::tie(ei, ei_end) = boost::out_edges(vertex, (LimitedMemoryMCTS<vertex_properties>::graph)); ei != ei_end; ++ei) {
-        LimitedMemoryMCTS<vertex_properties>::vertex_t target = boost::target(*ei, LimitedMemoryMCTS<vertex_properties>::graph);
-        garbage.merge(LimitedMemoryMCTS<vertex_properties>::delete_branch(target));
+    std::list<vertex_t> garbage;
+    out_edge_iterator ei, ei_end;
+    for (boost::tie(ei, ei_end) = boost::out_edges(vertex, (graph)); ei != ei_end; ++ei) {
+        vertex_t target = boost::target(*ei, graph);
+        garbage.merge(delete_branch(target));
     }
 
     garbage.push_back(vertex);
@@ -165,62 +165,62 @@ std::list<typename LimitedMemoryMCTS<vertex_properties>::vertex_t> LimitedMemory
 template<typename vertex_properties>
 void LimitedMemoryMCTS<vertex_properties>::root_changeover(LimitedMemoryMCTS<vertex_properties>::vertex_t chosen) {
     // Make the play the new root by first removing all irrelevant branches
-    std::list<LimitedMemoryMCTS<vertex_properties>::vertex_t> garbage;
-    LimitedMemoryMCTS<vertex_properties>::out_edge_iterator ei, ei_end;
-    LimitedMemoryMCTS<vertex_properties>::vertex_t root = LimitedMemoryMCTS<vertex_properties>::get_root();
-    for (boost::tie(ei, ei_end) = boost::out_edges(root, LimitedMemoryMCTS<vertex_properties>::graph); ei != ei_end; ++ei) {
-        LimitedMemoryMCTS<vertex_properties>::vertex_t target = boost::target(*ei, LimitedMemoryMCTS<vertex_properties>::graph);
+    std::list<vertex_t> garbage;
+    out_edge_iterator ei, ei_end;
+    vertex_t root = get_root();
+    for (boost::tie(ei, ei_end) = boost::out_edges(root, graph); ei != ei_end; ++ei) {
+        vertex_t target = boost::target(*ei, graph);
         if (target != chosen) {
-            garbage.merge(LimitedMemoryMCTS<vertex_properties>::delete_branch(target));
+            garbage.merge(delete_branch(target));
         }
     }
 
-    for (LimitedMemoryMCTS<vertex_properties>::vertex_t to_remove : garbage) {
-        boost::clear_vertex(to_remove, LimitedMemoryMCTS<vertex_properties>::graph);
-        boost::remove_vertex(to_remove, LimitedMemoryMCTS<vertex_properties>::graph);
+    for (vertex_t to_remove : garbage) {
+        boost::clear_vertex(to_remove, graph);
+        boost::remove_vertex(to_remove, graph);
     }
 
-    boost::clear_vertex(root, LimitedMemoryMCTS<vertex_properties>::graph); // Remove old root. Remove all edges otherwise undefined behaviour occurs after remove_vertex
-    boost::remove_vertex(root, LimitedMemoryMCTS<vertex_properties>::graph);
+    boost::clear_vertex(root, graph); // Remove old root. Remove all edges otherwise undefined behaviour occurs after remove_vertex
+    boost::remove_vertex(root, graph);
 
 }
 
 template<typename vertex_properties>
 std::list<vertex_properties> LimitedMemoryMCTS<vertex_properties>::get_child_properties(LimitedMemoryMCTS<vertex_properties>::vertex_t vertex) {
     std::list<vertex_properties> children;
-    LimitedMemoryMCTS<vertex_properties>::out_edge_iterator ei, ei_end;
+    out_edge_iterator ei, ei_end;
 
-    for (boost::tie(ei, ei_end) = boost::out_edges(vertex, LimitedMemoryMCTS<vertex_properties>::graph); ei != ei_end; ++ei) {
-        children.push_back(LimitedMemoryMCTS<vertex_properties>::graph[boost::target(*ei, LimitedMemoryMCTS<vertex_properties>::graph)]);
+    for (boost::tie(ei, ei_end) = boost::out_edges(vertex, graph); ei != ei_end; ++ei) {
+        children.push_back(graph[boost::target(*ei, graph)]);
     }
     return children;
 }
 
 template<typename vertex_properties>
 std::list<typename LimitedMemoryMCTS<vertex_properties>::vertex_t> LimitedMemoryMCTS<vertex_properties>::get_children(LimitedMemoryMCTS<vertex_properties>::vertex_t vertex) {
-    std::list<LimitedMemoryMCTS<vertex_properties>::vertex_t> children;
-    LimitedMemoryMCTS<vertex_properties>::out_edge_iterator ei, ei_end;
+    std::list<vertex_t> children;
+    out_edge_iterator ei, ei_end;
 
-    for (boost::tie(ei, ei_end) = boost::out_edges(vertex, LimitedMemoryMCTS<vertex_properties>::graph); ei != ei_end; ++ei) {
-        children.push_back(boost::target(*ei, LimitedMemoryMCTS<vertex_properties>::graph));
+    for (boost::tie(ei, ei_end) = boost::out_edges(vertex, graph); ei != ei_end; ++ei) {
+        children.push_back(boost::target(*ei, graph));
     }
     return children;
 }
 
 template<typename vertex_properties>
 typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex_properties>::make_best_play() {
-    LimitedMemoryMCTS<vertex_properties>::vertex_t root = LimitedMemoryMCTS<vertex_properties>::get_root();
+    vertex_t root = get_root();
     float max_value = -1;
     float new_value;
     int i = 0;
-    LimitedMemoryMCTS<vertex_properties>::vertex_t best = 0;
-    LimitedMemoryMCTS<vertex_properties>::out_edge_iterator ei, ei_end;
+    vertex_t best = 0;
+    out_edge_iterator ei, ei_end;
 
     // Calculate best play
-    for (boost::tie(ei, ei_end) = boost::out_edges(root, LimitedMemoryMCTS<vertex_properties>::graph); ei != ei_end; ++ei) {
-        LimitedMemoryMCTS<vertex_properties>::vertex_t target = boost::target(*ei, LimitedMemoryMCTS<vertex_properties>::graph);
+    for (boost::tie(ei, ei_end) = boost::out_edges(root, graph); ei != ei_end; ++ei) {
+        vertex_t target = boost::target(*ei, graph);
 
-        new_value = LimitedMemoryMCTS<vertex_properties>::graph[target].wins / LimitedMemoryMCTS<vertex_properties>::graph[target].visits;
+        new_value = graph[target].wins / graph[target].visits;
 
         if (new_value > max_value) {
             max_value = new_value;
@@ -234,57 +234,57 @@ typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex
 
 template<typename vertex_properties>
 int LimitedMemoryMCTS<vertex_properties>::terminal(LimitedMemoryMCTS<vertex_properties>::vertex_t vertex) {
-    return LimitedMemoryMCTS<vertex_properties>::graph[vertex].terminal();
+    return graph[vertex].terminal();
 }
 
 template<typename vertex_properties>
 int LimitedMemoryMCTS<vertex_properties>::simulate(LimitedMemoryMCTS<vertex_properties>::vertex_t vertex) {
-    return LimitedMemoryMCTS<vertex_properties>::graph[vertex].playout();
+    return graph[vertex].playout();
 }
 
 template<typename vertex_properties>
 void LimitedMemoryMCTS<vertex_properties>::backpropagate(LimitedMemoryMCTS<vertex_properties>::vertex_t vertex, int result) {
-    std::list<LimitedMemoryMCTS<vertex_properties>::vertex_t> path;
-    while (boost::in_degree(vertex, LimitedMemoryMCTS<vertex_properties>::graph)) { // While we are not at the root
+    std::list<vertex_t> path;
+    while (boost::in_degree(vertex, graph)) { // While we are not at the root
         path.push_front(vertex);
-        vertex = LimitedMemoryMCTS<vertex_properties>::get_parent(vertex);
+        vertex = get_parent(vertex);
     }
     int player = 1; // Start with AI player
-    for (typename std::list<LimitedMemoryMCTS<vertex_properties>::vertex_t>::iterator it = path.begin(); it != path.end(); ++it) {
+    for (typename std::list<vertex_t>::iterator it = path.begin(); it != path.end(); ++it) {
         if (result == player) {
-            LimitedMemoryMCTS<vertex_properties>::graph[*it].wins += 1;
+            graph[*it].wins += 1;
         } else if (result == 3) {
-            LimitedMemoryMCTS<vertex_properties>::graph[*it].wins += 0.5;
+            graph[*it].wins += 0.5;
         }
-        LimitedMemoryMCTS<vertex_properties>::graph[*it].visits += 1;
+        graph[*it].visits += 1;
         player ^= 3; // Switch player
     }
 }
 
 template<typename vertex_properties>
 typename LimitedMemoryMCTS<vertex_properties>::Graph* LimitedMemoryMCTS<vertex_properties>::get_graph() {
-    return &(LimitedMemoryMCTS<vertex_properties>::graph);
+    return &graph;
 }
 
 template<typename vertex_properties>
 vertex_properties LimitedMemoryMCTS<vertex_properties>::get_vertex_properties(LimitedMemoryMCTS<vertex_properties>::vertex_t vertex) {
-    return LimitedMemoryMCTS<vertex_properties>::graph[vertex];
+    return graph[vertex];
 }
 
 template<typename vertex_properties>
 typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex_properties>::make_play(LimitedMemoryMCTS<vertex_properties>::vertex_t root, vertex_properties vp) {
-    std::list<LimitedMemoryMCTS<vertex_properties>::vertex_t> children = LimitedMemoryMCTS<vertex_properties>::get_children(root);
+    std::list<vertex_t> children = get_children(root);
 
-    for (typename std::list<LimitedMemoryMCTS<vertex_properties>::vertex_t>::iterator it = children.begin(); it != children.end(); ++it) {
-        if (LimitedMemoryMCTS<vertex_properties>::graph[*it].equals(vp)) {
+    for (typename std::list<vertex_t>::iterator it = children.begin(); it != children.end(); ++it) {
+        if (graph[*it].equals(vp)) {
             return *it;
         }
     }
 
     // If we got to this point, we need to add the new node
-    LimitedMemoryMCTS<vertex_properties>::vertex_t child = boost::add_vertex(vp, LimitedMemoryMCTS<vertex_properties>::graph); // Add node and return the vertex descriptor
+    vertex_t child = boost::add_vertex(vp, graph); // Add node and return the vertex descriptor
 
-    boost::add_edge(root, child, LimitedMemoryMCTS<vertex_properties>::graph);
+    boost::add_edge(root, child, graph);
 
     return child;
 }
