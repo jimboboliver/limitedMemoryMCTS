@@ -95,9 +95,9 @@ typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex
     out_edge_iterator ei, ei_end;
 
     for (boost::tie(ei, ei_end) = boost::out_edges(vertex, (graph)); ei != ei_end; ++ei) {
-        vertex_t target = boost::target(*ei, graph);
+        vertex_t target = boost::target(*ei, graph);     
 
-        new_value = (graph)[target].wins / (graph)[target].visits + sqrt(2 * log((graph)[vertex].visits) / (graph)[target].visits);
+        new_value = graph[target].wins / graph[target].visits + sqrt(2 * log(graph[vertex].visits) / graph[target].visits);
 
         if (new_value > max_value) {
             max_value = new_value;
@@ -188,10 +188,15 @@ void LimitedMemoryMCTS<vertex_properties>::root_changeover(LimitedMemoryMCTS<ver
 template<typename vertex_properties>
 std::list<vertex_properties> LimitedMemoryMCTS<vertex_properties>::get_child_properties(LimitedMemoryMCTS<vertex_properties>::vertex_t vertex) {
     std::list<vertex_properties> children;
-    out_edge_iterator ei, ei_end;
+    // out_edge_iterator ei, ei_end;
 
-    for (boost::tie(ei, ei_end) = boost::out_edges(vertex, graph); ei != ei_end; ++ei) {
-        children.push_back(graph[boost::target(*ei, graph)]);
+    // for (boost::tie(ei, ei_end) = boost::out_edges(vertex, graph); ei != ei_end; ++ei) {
+    //     children.push_back(graph[boost::target(*ei, graph)]);
+    // }
+    // return children;
+
+    for (auto vd : boost::make_iterator_range(adjacent_vertices(vertex, graph))) {
+        children.push_back(graph[vd]);
     }
     return children;
 }
@@ -259,6 +264,13 @@ void LimitedMemoryMCTS<vertex_properties>::backpropagate(LimitedMemoryMCTS<verte
         graph[*it].visits += 1;
         player ^= 3; // Switch player
     }
+    // Add statistics to root
+    if (result == 2) {
+        graph[vertex].wins += 1;
+    } else if (result == 3) {
+        graph[vertex].wins += 0.5;
+    }
+    graph[vertex].visits += 1;
 }
 
 template<typename vertex_properties>
@@ -347,10 +359,18 @@ unsigned int VertexProperties::num_possible_moves() {
 
 VertexProperties VertexProperties::generate_child(std::list<VertexProperties> existing_plays) {
     int plays[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+    int available_plays[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+    if (existing_plays.size() == 0) { // If there are no children, need to check existing plays in this state
+        for (int j = 0; j < 9; j++) {
+            if (state.spots[j].x) {
+                plays[j] = 1;
+            }
+        }
+    }
     for (std::list<VertexProperties>::iterator it = existing_plays.begin(); it != existing_plays.end(); ++it) {
         for (int j = 0; j < 9; j++) {
             if ((*it).state.spots[j].x) {
-                plays[j] = (*it).state.spots[j].x;
+                plays[j] = 1;
             }
         }
     }
@@ -358,17 +378,23 @@ VertexProperties VertexProperties::generate_child(std::list<VertexProperties> ex
     int num_plays = 0;
     for (int i = 0; i < 9; i++) {
         if (!plays[i]) {
-            plays[num_plays++] = i;
+            available_plays[num_plays++] = i;
         }
     }
-    int chosen_play = plays[rand() % num_plays];
+    int chosen_play = available_plays[rand() % num_plays];
 
     Board new_state = state;
 
-    if (num_plays % 2 == 0) {
+    if (player.x == 1) {
+        if (new_state.spots[chosen_play].x != 0) {
+            std::cout << "Problem\n";
+        }
         new_state.spots[chosen_play].x = 2;
         return VertexProperties(new_state, Spot{2});
     } else {
+        if (new_state.spots[chosen_play].x != 0) {
+            std::cout << "Problem\n";
+        }
         new_state.spots[chosen_play].x = 1;
         return VertexProperties(new_state, Spot{1});
     }
@@ -433,6 +459,7 @@ int VertexProperties::playout() {
     int term;
     Board currentBoard = state;
     Spot currentPlayer = player;
+    currentPlayer.x ^= 3;
     
     while (!(term = terminal_board(currentBoard))) {
         currentBoard = simulate(currentBoard, currentPlayer);
@@ -602,9 +629,7 @@ int main() {
                 }
 
                 // Simulate
-                if (!(term = MCTS::terminal(vertex))) {
-                    term = MCTS::simulate(vertex);
-                }
+                term = MCTS::simulate(vertex);
             }
 
             // Backpropagate
@@ -623,23 +648,23 @@ int main() {
         term = MCTS::terminal(vertex);
 
         if (term == 1) {
-            printf("\nGame over! AI wins\n");
+            std::cout << "\nGame over! AI wins\n";
             break;
         } else if (term == 3) {
-            printf("\nGame over! Draw\n");
+            std::cout << "\nGame over! Draw\n";
             break;
         }
 
-        printf("\nEnter play: ");
+        std::cout << "\nEnter play: ";
 
         int humanPlay;
         int ch;
         while (1) {
             humanPlay = std::cin.get() - 48;
             while ((ch = std::cin.get()) != '\n' && ch != EOF);
-            printf("\n");
+            std::cout << '\n';
             if (humanPlay > 8 || humanPlay < 0 || rootBoard.spots[humanPlay].x) {
-                printf("Cannot make play. Enter play: ");
+                std::cout << "Cannot make play. Enter play: ";
             } else {
                 break;
             }
@@ -650,18 +675,16 @@ int main() {
         vertex = MCTS::make_play(vertex, VertexProperties(rootBoard, Spot{2}));
         MCTS::root_changeover(vertex);
 
-        std::cout << print_board(rootBoard);
+        std::cout << print_board(rootBoard) << '\n';
         std::cout.flush();
-
-        printf("\n");
 
         term = terminal_board(rootBoard);
 
         if (term == 2) {
-            printf("\nGame over! Player wins\n");
+            std::cout << "\nGame over! Player wins\n";
             break;
         } else if (term == 3) {
-            printf("\nGame over! Draw\n");
+            std::cout << "\nGame over! Draw\n";
             break;
         }
     }
