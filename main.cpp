@@ -97,7 +97,7 @@ typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex
     for (boost::tie(ei, ei_end) = boost::out_edges(vertex, (graph)); ei != ei_end; ++ei) {
         vertex_t target = boost::target(*ei, graph);     
 
-        new_value = graph[target].wins / graph[target].visits + sqrt(2 * log(graph[vertex].visits) / graph[target].visits);
+        new_value = graph[target].wins / graph[target].visits + sqrt(log(graph[vertex].visits) / graph[target].visits);
 
         if (new_value > max_value) {
             max_value = new_value;
