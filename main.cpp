@@ -7,17 +7,16 @@
 #include <boost/graph/adjacency_list.hpp>
 #include <boost/graph/graphviz.hpp>
 
-#define ITERATIONS 1000
+#define ITERATIONS 100
+#define MAX_STATES 50
 
 template<typename vertex_properties>
 class LimitedMemoryMCTS {
     public:
         /* define the graph type
-            listS: selects the STL list container to store 
-                    the OutEdge list
-            listS: selects the STL vector container to store 
-                the vertices
-            directedS: selects directed edges
+            listS: selects the STL list container to store the OutEdge list
+            listS: selects the STL list container to store the vertices
+            bidirectionalS: selects bidirectional edges
 
             template allows for vertex_properties to be written for specific use
         */
@@ -30,61 +29,75 @@ class LimitedMemoryMCTS {
         typedef typename boost::graph_traits<Graph>::in_edge_iterator in_edge_iterator;
         typedef std::map<vertex_t, size_t> IndexMap;
 
-        static vertex_t add_vertex(vertex_properties vp);
+        LimitedMemoryMCTS(vertex_properties rootVP);
 
-        static vertex_t get_root();
+        vertex_t add_vertex(vertex_properties vp);
+
+        vertex_t get_root();
         
-        static vertex_t select_child(vertex_t vertex);
+        vertex_t select_child(vertex_t vertex);
 
-        static vertex_t select(vertex_t vertex);
+        vertex_t select(vertex_t vertex);
 
-        static vertex_t get_parent(vertex_t vertex);
+        vertex_t get_parent(vertex_t vertex);
+
+        std::list<std::pair<float, vertex_t>> leaf_probabilities(vertex_t vertex, float currentProbability);
+
+        void remove_worst_state();
 
         /* Add child and return it. */
-        static vertex_t add_child(vertex_t vertex);
+        vertex_t add_child(vertex_t vertex);
 
         bool is_leaf(vertex_t vertex);
 
-        static std::list<vertex_t> delete_branch(vertex_t vertex);
+        std::list<vertex_t> delete_branch(vertex_t vertex);
 
-        static void root_changeover(vertex_t chosen);
+        void root_changeover(vertex_t chosen);
 
-        static std::list<vertex_properties> get_child_properties(vertex_t vertex);
-        static std::list<vertex_t> get_children(vertex_t vertex);
+        std::list<vertex_properties> get_child_properties(vertex_t vertex);
 
-        static vertex_t make_best_play();
+        std::list<vertex_t> get_children(vertex_t vertex);
 
-        static int terminal(vertex_t vertex);
+        vertex_t make_best_play();
+
+        int terminal(vertex_t vertex);
         
-        static bool has_unborn(vertex_t vertex);
+        bool has_unborn(vertex_t vertex);
 
-        static int simulate(vertex_t vertex);
+        int simulate(vertex_t vertex);
 
-        static void backpropagate(vertex_t vertex, int result);
+        void backpropagate(vertex_t vertex, int result);
     
-        static Graph* get_graph();
+        Graph* get_graph();
 
-        static vertex_properties get_vertex_properties(vertex_t vertex);
+        vertex_properties get_vertex_properties(vertex_t vertex);
 
-        static vertex_t make_play(vertex_t root, vertex_properties vp);
+        vertex_t make_play(vertex_t root, vertex_properties vp);
 
-        static void make_new_graph();
+        void make_new_graph();
 
-        static Graph graph;
+    private:
+        Graph graph = Graph();
+        int num_states = 0;
+        vertex_t root;
 };
 
 template<typename vertex_properties>
-typename LimitedMemoryMCTS<vertex_properties>::Graph LimitedMemoryMCTS<vertex_properties>::graph = LimitedMemoryMCTS<vertex_properties>::Graph();
+LimitedMemoryMCTS<vertex_properties>::LimitedMemoryMCTS(vertex_properties vp) {
+    root = add_vertex(vp);
+}
 
 template<typename vertex_properties>
 typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex_properties>::add_vertex(vertex_properties vp) {
+    if (vp.has_state) {
+        num_states++;
+    }
     return boost::add_vertex(vp, graph);
 }
 
 template<typename vertex_properties>
 typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex_properties>::get_root() {
-    std::pair<vertex_iterator, vertex_iterator> it = boost::vertices(graph);
-    return *it.first;
+    return root;
 }
 
 template<typename vertex_properties>
@@ -132,50 +145,108 @@ typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex
     return vertex;
 }
 
+template<typename vertex_properties>
+std::list<std::pair<float, typename LimitedMemoryMCTS<vertex_properties>::vertex_t>> LimitedMemoryMCTS<vertex_properties>::leaf_probabilities(LimitedMemoryMCTS<vertex_properties>::vertex_t vertex, float currentProbability) {
+    std::list<std::pair<float, LimitedMemoryMCTS<vertex_properties>::vertex_t>> probabilities;
+
+    out_edge_iterator ei, ei_end;
+    std::list<std::pair<float, LimitedMemoryMCTS<vertex_properties>::vertex_t>> UCTs;
+    float UCTsum = 0;
+    for (boost::tie(ei, ei_end) = boost::out_edges(vertex, graph); ei != ei_end; ++ei) {
+        vertex_t target = boost::target(*ei, graph);
+        float uct = graph[target].wins / graph[target].visits + sqrt(log(graph[vertex].visits) / graph[target].visits);
+        if (std::isnan(uct)) {
+            uct = 0;
+        }
+        UCTsum += uct;
+        UCTs.push_back(std::make_pair(uct, target));
+    }
+
+    for (typename std::list<std::pair<float, LimitedMemoryMCTS<vertex_properties>::vertex_t>>::iterator it = UCTs.begin(); it != UCTs.end(); it++) {
+        float new_probability = currentProbability * ((*it).first / UCTsum);
+        if (std::isnan(new_probability)) {
+            new_probability = 0;
+        }
+        if (is_leaf((*it).second) && graph[(*it).second].has_state) { // Add probability to list of leaf probabilities
+            probabilities.push_back(std::make_pair(new_probability, (*it).second));
+        } else { // Keep walking tree
+            probabilities.merge(leaf_probabilities((*it).second, new_probability));
+        }
+    }
+
+    return probabilities;
+}
+
+template<typename vertex_properties>
+void LimitedMemoryMCTS<vertex_properties>::remove_worst_state() {
+    std::list<std::pair<float, typename LimitedMemoryMCTS<vertex_properties>::vertex_t>> probabilities = leaf_probabilities(get_root(), 1);
+    float min_value = 999999;
+    typename LimitedMemoryMCTS<vertex_properties>::vertex_t min_vertex = 0;
+    
+    
+    for (typename std::list<std::pair<float, typename LimitedMemoryMCTS<vertex_properties>::vertex_t>>::iterator it = probabilities.begin(); it != probabilities.end(); it++) {
+        if ((*it).first < min_value) {
+            min_value = (*it).first;
+            min_vertex = (*it).second;
+        }
+    }
+    if (min_vertex != 0) {
+        graph[min_vertex].has_state = false;
+        num_states--;
+    }
+}
+
 /** Add child and return it. */
 template<typename vertex_properties>
 typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex_properties>::add_child(LimitedMemoryMCTS<vertex_properties>::vertex_t vertex) {
+    // Check whether there are too many states stored and remove if so
+    if (num_states >= MAX_STATES) {
+        remove_worst_state();
+    }
+
     vertex_properties vp = graph[vertex].generate_child(get_child_properties(vertex));
     vertex_t child = boost::add_vertex(vp, graph); // Add node and return the vertex descriptor
 
     boost::add_edge(vertex, child, graph);
+
+    num_states++;
 
     return child;
 }
 
 template<typename vertex_properties>
 bool LimitedMemoryMCTS<vertex_properties>::is_leaf(LimitedMemoryMCTS<vertex_properties>::vertex_t vertex) {
+    // std::cout << boost::in_degree(vertex, graph) << ' ' << boost::out_degree(vertex, graph) << '\n';
     return !boost::in_degree(vertex, graph) || !boost::out_degree(vertex, graph);
 }
 
 template<typename vertex_properties>
 std::list<typename LimitedMemoryMCTS<vertex_properties>::vertex_t> LimitedMemoryMCTS<vertex_properties>::delete_branch(LimitedMemoryMCTS<vertex_properties>::vertex_t vertex) { // recursively delete all descendant nodes and itself
-    std::list<vertex_t> garbage;
+    std::list<vertex_t> probabilities;
     out_edge_iterator ei, ei_end;
-    for (boost::tie(ei, ei_end) = boost::out_edges(vertex, (graph)); ei != ei_end; ++ei) {
+    for (boost::tie(ei, ei_end) = boost::out_edges(vertex, graph); ei != ei_end; ++ei) {
         vertex_t target = boost::target(*ei, graph);
-        garbage.merge(delete_branch(target));
+        probabilities.merge(delete_branch(target));
     }
 
-    garbage.push_back(vertex);
+    probabilities.push_back(vertex);
 
-    return garbage;
+    return probabilities;
 }
 
 template<typename vertex_properties>
 void LimitedMemoryMCTS<vertex_properties>::root_changeover(LimitedMemoryMCTS<vertex_properties>::vertex_t chosen) {
     // Make the play the new root by first removing all irrelevant branches
-    std::list<vertex_t> garbage;
+    std::list<vertex_t> probabilities;
     out_edge_iterator ei, ei_end;
-    vertex_t root = get_root();
     for (boost::tie(ei, ei_end) = boost::out_edges(root, graph); ei != ei_end; ++ei) {
         vertex_t target = boost::target(*ei, graph);
         if (target != chosen) {
-            garbage.merge(delete_branch(target));
+            probabilities.merge(delete_branch(target));
         }
     }
 
-    for (vertex_t to_remove : garbage) {
+    for (vertex_t to_remove : probabilities) {
         boost::clear_vertex(to_remove, graph);
         boost::remove_vertex(to_remove, graph);
     }
@@ -183,17 +254,12 @@ void LimitedMemoryMCTS<vertex_properties>::root_changeover(LimitedMemoryMCTS<ver
     boost::clear_vertex(root, graph); // Remove old root. Remove all edges otherwise undefined behaviour occurs after remove_vertex
     boost::remove_vertex(root, graph);
 
+    root = chosen;
 }
 
 template<typename vertex_properties>
 std::list<vertex_properties> LimitedMemoryMCTS<vertex_properties>::get_child_properties(LimitedMemoryMCTS<vertex_properties>::vertex_t vertex) {
     std::list<vertex_properties> children;
-    // out_edge_iterator ei, ei_end;
-
-    // for (boost::tie(ei, ei_end) = boost::out_edges(vertex, graph); ei != ei_end; ++ei) {
-    //     children.push_back(graph[boost::target(*ei, graph)]);
-    // }
-    // return children;
 
     for (auto vd : boost::make_iterator_range(adjacent_vertices(vertex, graph))) {
         children.push_back(graph[vd]);
@@ -609,43 +675,45 @@ int main() {
     
     std::srand(time(NULL));
 
-    MCTS::vertex_t vertex = MCTS::add_vertex(VertexProperties(Board{0}, Spot{2})); // Add root node
+    MCTS mcts = MCTS(VertexProperties(Board{0}, Spot{2}));
+
+    MCTS::vertex_t vertex = mcts.get_root();
 
     while (1) {
         int term;
 
          // MCTS iterations
         for (int it = 0; it < ITERATIONS; it++) {
-            vertex = MCTS::get_root();
+            vertex = mcts.get_root();
 
             // Select
-            vertex = MCTS::select(vertex);
+            vertex = mcts.select(vertex);
 
             // If not terminal
-            if (!(term = MCTS::terminal(vertex))) {
+            if (!(term = mcts.terminal(vertex))) {
                 // Expand
-                if (MCTS::has_unborn(vertex)) {
-                    vertex = MCTS::add_child(vertex);
+                if (mcts.has_unborn(vertex)) {
+                    vertex = mcts.add_child(vertex);
                 }
 
                 // Simulate
-                term = MCTS::simulate(vertex);
+                term = mcts.simulate(vertex);
             }
 
             // Backpropagate
-            MCTS::backpropagate(vertex, term);
+            mcts.backpropagate(vertex, term);
         }
         
-        write_dot(MCTS::get_graph(), write_iteration++);
+        write_dot(mcts.get_graph(), write_iteration++);
 
-        vertex = MCTS::make_best_play();
-        Board rootBoard = MCTS::get_vertex_properties(vertex).state;
-        MCTS::root_changeover(vertex);
+        vertex = mcts.make_best_play();
+        Board rootBoard = mcts.get_vertex_properties(vertex).state;
+        mcts.root_changeover(vertex);
 
         std::cout << print_board(rootBoard);
         std::cout.flush();
 
-        term = MCTS::terminal(vertex);
+        term = mcts.terminal(vertex);
 
         if (term == 1) {
             std::cout << "\nGame over! AI wins\n";
@@ -672,8 +740,8 @@ int main() {
 
         rootBoard.spots[humanPlay].x = 2;
 
-        vertex = MCTS::make_play(vertex, VertexProperties(rootBoard, Spot{2}));
-        MCTS::root_changeover(vertex);
+        vertex = mcts.make_play(vertex, VertexProperties(rootBoard, Spot{2}));
+        mcts.root_changeover(vertex);
 
         std::cout << print_board(rootBoard) << '\n';
         std::cout.flush();
