@@ -204,7 +204,7 @@ typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex
         remove_worst_state();
     }
 
-    vertex_properties vp = graph[vertex].generate_child(get_child_properties(vertex));
+    vertex_properties vp = graph[vertex].generate_child(boost::out_degree(vertex, graph));
     vertex_t child = boost::add_vertex(vp, graph); // Add node and return the vertex descriptor
 
     boost::add_edge(vertex, child, graph);
@@ -392,7 +392,7 @@ class VertexProperties {
 
         unsigned int num_possible_moves();
         int terminal();
-        VertexProperties generate_child(std::list<VertexProperties> existing_plays);
+        VertexProperties generate_child(int playNum);
         int playout();
         bool equals(VertexProperties otherVP);
 };
@@ -423,21 +423,13 @@ unsigned int VertexProperties::num_possible_moves() {
     return num_moves;
 }
 
-VertexProperties VertexProperties::generate_child(std::list<VertexProperties> existing_plays) {
+VertexProperties VertexProperties::generate_child(int playNum) {
     int plays[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
     int available_plays[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
-    if (existing_plays.size() == 0) { // If there are no children, need to check existing plays in this state
-        for (int j = 0; j < 9; j++) {
-            if (state.spots[j].x) {
-                plays[j] = 1;
-            }
-        }
-    }
-    for (std::list<VertexProperties>::iterator it = existing_plays.begin(); it != existing_plays.end(); ++it) {
-        for (int j = 0; j < 9; j++) {
-            if ((*it).state.spots[j].x) {
-                plays[j] = 1;
-            }
+
+    for (int j = 0; j < 9; j++) {
+        if (state.spots[j].x) {
+            plays[j] = 1;
         }
     }
 
@@ -447,7 +439,7 @@ VertexProperties VertexProperties::generate_child(std::list<VertexProperties> ex
             available_plays[num_plays++] = i;
         }
     }
-    int chosen_play = available_plays[rand() % num_plays];
+    int chosen_play = available_plays[playNum];
 
     Board new_state = state;
 
