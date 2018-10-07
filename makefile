@@ -9,6 +9,8 @@ dots:
 debug: main.cpp
 	g++ -std=c++0x -Wall -o debug main.cpp -lm -g -I$(BOOST)
 
+all: debug default
+
+
 clean:
-	del mcts.exe
-	del debug.exe
+	rm mcts debug
