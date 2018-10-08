@@ -7,7 +7,7 @@
 #include <boost/graph/adjacency_list.hpp>
 #include <boost/graph/graphviz.hpp>
 
-#define ITERATIONS 10000
+#define ITERATIONS 1000
 #define MAX_STATES 5
 
 template<typename vertex_properties>
@@ -41,9 +41,7 @@ class LimitedMemoryMCTS {
 
         vertex_t get_parent(vertex_t vertex);
 
-        std::list<std::pair<float, vertex_t>> leaf_probabilities(vertex_t vertex, float currentProbability);
-
-        void remove_worst_state();
+        std::map<vertex_t, float> prop_UCBs(vertex_t vertex, float currentUCB);
 
         int get_child_num(vertex_t parent, vertex_t child);
 
@@ -86,7 +84,7 @@ class LimitedMemoryMCTS {
 
         void optimise_states();
 
-        int expected_regeneration(std::map<vertex_t, bool> states);
+        float optimisation_reward(std::map<vertex_t, bool> states, std::vector<vertex_t> leaves, std::map<vertex_t, float> prop_UCB);
 
     private:
         Graph graph = Graph();
@@ -436,7 +434,7 @@ template<typename vertex_properties>
 typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex_properties>::select_child(vertex_t vertex) {
     float max_value = 0;
     float new_value;
-    vertex_t best;
+    vertex_t best = 0;
     out_edge_iterator ei, ei_end;
 
     for (boost::tie(ei, ei_end) = boost::out_edges(vertex, graph); ei != ei_end; ++ei) {
@@ -481,8 +479,8 @@ typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex
 }
 
 template<typename vertex_properties>
-std::list<std::pair<float, typename LimitedMemoryMCTS<vertex_properties>::vertex_t>> LimitedMemoryMCTS<vertex_properties>::leaf_probabilities(vertex_t vertex, float currentProbability) {
-    std::list<std::pair<float, vertex_t>> probabilities;
+std::map<typename LimitedMemoryMCTS<vertex_properties>::vertex_t, float> LimitedMemoryMCTS<vertex_properties>::prop_UCBs(vertex_t vertex, float currentUCB) {
+    std::map<vertex_t, float> proportional_UCBs;
 
     out_edge_iterator ei, ei_end;
     std::list<std::pair<float, vertex_t>> UCTs;
@@ -498,42 +496,24 @@ std::list<std::pair<float, typename LimitedMemoryMCTS<vertex_properties>::vertex
     }
 
     for (typename std::list<std::pair<float, vertex_t>>::iterator it = UCTs.begin(); it != UCTs.end(); it++) {
-        float new_probability = currentProbability * ((*it).first / UCTsum);
-        if (std::isnan(new_probability)) {
-            new_probability = 0;
+        float new_UCB = currentUCB * ((*it).first / UCTsum);
+        if (std::isnan(new_UCB)) {
+            new_UCB = 0;
         }
-        if (is_leaf((*it).second) && graph[(*it).second].has_state) { // Add probability to list of leaf probabilities
-            probabilities.push_back(std::make_pair(new_probability, (*it).second));
-        } else { // Keep walking tree
-            probabilities.merge(leaf_probabilities((*it).second, new_probability));
+        proportional_UCBs[(*it).second] = new_UCB;
+        if (!is_leaf((*it).second)) { // Keep walking tree
+            std::map<vertex_t, float> other_UCBs = prop_UCBs((*it).second, new_UCB);
+            proportional_UCBs.insert(other_UCBs.begin(), other_UCBs.end());
         }
     }
 
-    return probabilities;
+    return proportional_UCBs;
 }
 
 template<typename vertex_properties>
 void LimitedMemoryMCTS<vertex_properties>::forget_state(vertex_t vertex) {
     graph[vertex].has_state = false;
     num_states--;
-}
-
-template<typename vertex_properties>
-void LimitedMemoryMCTS<vertex_properties>::remove_worst_state() {
-    std::list<std::pair<float, vertex_t>> probabilities = leaf_probabilities(get_root(), 1);
-    float min_value = 9999999;
-    vertex_t min_vertex = 0;
-    
-    
-    for (typename std::list<std::pair<float, vertex_t>>::iterator it = probabilities.begin(); it != probabilities.end(); it++) {
-        if ((*it).first < min_value) {
-            min_value = (*it).first;
-            min_vertex = (*it).second;
-        }
-    }
-    if (min_vertex != 0) {
-        forget_state(min_vertex);
-    }
 }
 
 template<typename vertex_properties>
@@ -581,34 +561,60 @@ void LimitedMemoryMCTS<vertex_properties>::regenerate(vertex_t vertex) {
     }
 }
 
-/* Returns number of nodes that will be generated next iteration due to a given set of saved states */
+/* Returns number of nodes that will be generated next num_iterations */
 template<typename vertex_properties>
-int LimitedMemoryMCTS<vertex_properties>::expected_regeneration(std::map<vertex_t, bool> states) {
-    vertex_t vertex = root;
-    while (boost::out_degree(vertex, graph) && !has_unborn(vertex)) { // Follow path to find next select
-        vertex = select_child(vertex);
+float LimitedMemoryMCTS<vertex_properties>::optimisation_reward(std::map<vertex_t, bool> states, std::vector<vertex_t> leaves, std::map<vertex_t, float> prop_UCB) {
+    float reward = 0;
+    for (auto it = leaves.begin(); it != leaves.end(); it++) {
+        vertex_t vertex = *it;
+
+        if (terminal(vertex)) { // If the leaf is terminal, add no reward for states in the path to this leaf
+            continue;
+        }
+
+        std::vector<float> path_UCBs = std::vector<float>();
+        int depth = 0;
+        int num_missing = 1;
+        while (vertex != root) {
+            depth++;
+            if (states[vertex]) {
+                path_UCBs.push_back(prop_UCB[vertex]);
+            } else {
+                num_missing++;
+            }
+            vertex = get_parent(vertex);
+        }
+
+        float numerator_sum = 0;
+        int i = 0;
+        for (auto iter = path_UCBs.begin(); iter != path_UCBs.end(); iter++) {
+            numerator_sum += (depth - i) * (*iter);
+            i++;
+        }
+
+        // Reward per path is proportional to SUM(state * depth * prop_UCB) / redundancy
+        reward += numerator_sum * (depth / num_missing);
     }
 
-    int num_to_regenerate = 0;
-    while (vertex != root && !states[vertex]) {
-        vertex = get_parent(vertex);
-        num_to_regenerate++;
-    }
-
-    return num_to_regenerate;
+    return reward;
 }
- 
+
 template<typename vertex_properties>
 void LimitedMemoryMCTS<vertex_properties>::optimise_states() {
     std::map<vertex_t, bool> states = std::map<vertex_t, bool>();
-    vertex_iterator ei, ei_end;
-    for (boost::tie(ei, ei_end) = boost::vertices(graph); ei != ei_end; ++ei) {
-        vertex_t target = *ei;
-        if (target != root) {
-            states[target] = false;
+    std::vector<vertex_t> leaves = std::vector<vertex_t>();
+    std::map<vertex_t, float> prop_UCB = prop_UCBs(root, 1);
+    vertex_iterator vi, vi_end;
+    for (boost::tie(vi, vi_end) = boost::vertices(graph); vi != vi_end; ++vi) {
+        vertex_t vertex = *vi;
+        if (vertex != root) {
+            states[vertex] = true; // Placeholder
+            if (is_leaf(vertex)) {
+                leaves.push_back(vertex);
+            }
         }
     }
-    // std::cout << expected_regeneration(states) << '\n';
+    // std::cout << optimisation_reward(states, leaves, prop_UCB) << '\n';
 }
 
 /* Requires 2 spare states */
