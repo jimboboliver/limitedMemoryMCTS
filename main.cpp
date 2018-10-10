@@ -6,6 +6,7 @@
 #include <vector>
 #include <boost/graph/adjacency_list.hpp>
 #include <boost/graph/graphviz.hpp>
+#include "OsiSymSolverInterface.hpp"
 
 #define ITERATIONS 1000
 #define MAX_STATES 5
@@ -601,6 +602,7 @@ double LimitedMemoryMCTS<vertex_properties>::optimisation_cost(std::map<vertex_t
 
 template<typename vertex_properties>
 void LimitedMemoryMCTS<vertex_properties>::optimise_states() {
+    OsiSymSolverInterface si;
     std::map<vertex_t, bool> states = std::map<vertex_t, bool>();
     std::vector<vertex_t> leaves = std::vector<vertex_t>();
     std::map<vertex_t, float> prop_UCB = prop_UCBs(root, 1);
