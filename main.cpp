@@ -32,6 +32,8 @@ class LimitedMemoryMCTS {
 
         LimitedMemoryMCTS(vertex_properties rootVP);
 
+        ~LimitedMemoryMCTS();
+
         vertex_t add_vertex(vertex_properties vp);
 
         vertex_t get_root();
@@ -103,12 +105,11 @@ typedef struct {
 
 class VertexProperties {
     public:
-        VertexProperties(Board state_stored, Spot last_player);
+        VertexProperties(Board* state_stored, Spot last_player);
         VertexProperties();
-        ~VertexProperties();
 
         bool has_state;
-        Board state;
+        Board* state;
         Spot player;
 
     public: // Needed for MCTS interface
@@ -124,14 +125,14 @@ class VertexProperties {
 };
 
 VertexProperties::VertexProperties() {
-    state = Board{0};
+    state = 0;
     player = Spot{2};
-    has_state = true;
+    has_state = false;
     wins = 0;
     visits = 0;
 }
 
-VertexProperties::VertexProperties(Board state_stored, Spot last_player) {
+VertexProperties::VertexProperties(Board* state_stored, Spot last_player) {
     state = state_stored;
     player = last_player;
     has_state = true;
@@ -139,14 +140,10 @@ VertexProperties::VertexProperties(Board state_stored, Spot last_player) {
     visits = 0;
 }
 
-VertexProperties::~VertexProperties() {
-
-}
-
 unsigned int VertexProperties::num_possible_moves() {
     unsigned int num_moves = 0;
     for (int i = 0; i < 9; i++) {
-        if (!state.spots[i].x) { // If the spot is empty it's a possible move
+        if (!state->spots[i].x) { // If the spot is empty it's a possible move
             num_moves++;
         }
     }
@@ -158,7 +155,7 @@ VertexProperties VertexProperties::generate_child(int playNum) {
     int available_plays[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
 
     for (int j = 0; j < 9; j++) {
-        if (state.spots[j].x) {
+        if (state->spots[j].x) {
             plays[j] = 1;
         }
     }
@@ -171,13 +168,14 @@ VertexProperties VertexProperties::generate_child(int playNum) {
     }
     int chosen_play = available_plays[playNum];
 
-    Board new_state = state;
+    Board* new_state = new Board;
+    *new_state = *state;
 
     if (player.x == 1) {
-        new_state.spots[chosen_play].x = 2;
+        new_state->spots[chosen_play].x = 2;
         return VertexProperties(new_state, Spot{2});
     } else {
-        new_state.spots[chosen_play].x = 1;
+        new_state->spots[chosen_play].x = 1;
         return VertexProperties(new_state, Spot{1});
     }
 }
@@ -187,7 +185,7 @@ void VertexProperties::regenerate_child(int playNum, VertexProperties* child) {
     int available_plays[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
 
     for (int j = 0; j < 9; j++) {
-        if (state.spots[j].x) {
+        if (state->spots[j].x) {
             plays[j] = 1;
         }
     }
@@ -200,27 +198,28 @@ void VertexProperties::regenerate_child(int playNum, VertexProperties* child) {
     }
     int chosen_play = available_plays[playNum];
 
-    Board new_state = state;
+    Board* new_state = new Board;
+    *new_state = *state;
 
     if (player.x == 1) {
-        new_state.spots[chosen_play].x = 2;
+        new_state->spots[chosen_play].x = 2;
     } else {
-        new_state.spots[chosen_play].x = 1;
+        new_state->spots[chosen_play].x = 1;
     }
     child->state = new_state;
     child->has_state = true;
 }
 
 bool VertexProperties::equals(VertexProperties otherVP) {
-    return state.spots[0].x == otherVP.state.spots[0].x &&
-           state.spots[1].x == otherVP.state.spots[1].x &&
-           state.spots[2].x == otherVP.state.spots[2].x &&
-           state.spots[3].x == otherVP.state.spots[3].x &&
-           state.spots[4].x == otherVP.state.spots[4].x &&
-           state.spots[5].x == otherVP.state.spots[5].x &&
-           state.spots[6].x == otherVP.state.spots[6].x &&
-           state.spots[7].x == otherVP.state.spots[7].x &&
-           state.spots[8].x == otherVP.state.spots[8].x;
+    return state->spots[0].x == otherVP.state->spots[0].x &&
+           state->spots[1].x == otherVP.state->spots[1].x &&
+           state->spots[2].x == otherVP.state->spots[2].x &&
+           state->spots[3].x == otherVP.state->spots[3].x &&
+           state->spots[4].x == otherVP.state->spots[4].x &&
+           state->spots[5].x == otherVP.state->spots[5].x &&
+           state->spots[6].x == otherVP.state->spots[6].x &&
+           state->spots[7].x == otherVP.state->spots[7].x &&
+           state->spots[8].x == otherVP.state->spots[8].x;
 }
 
 Board simulate(Board board, Spot player) {
@@ -268,7 +267,7 @@ int terminal_board(Board state) {
 
 int VertexProperties::playout() {
     int term;
-    Board currentBoard = state;
+    Board currentBoard = *state;
     Spot currentPlayer = player;
     currentPlayer.x ^= 3;
     
@@ -282,23 +281,23 @@ int VertexProperties::playout() {
 
 /** Return whether tic-tac-toe state is gameover and if so, who won. 0 = not gameover, 1 = AI, 2 = player, 3 = draw */
 int VertexProperties::terminal() {
-    if (state.spots[0].x && state.spots[0].x == state.spots[1].x && state.spots[1].x == state.spots[2].x) {
-        return state.spots[0].x;
-    } else if (state.spots[3].x && state.spots[3].x == state.spots[4].x && state.spots[4].x == state.spots[5].x) {
-        return state.spots[3].x;
-    } else if (state.spots[6].x && state.spots[6].x == state.spots[7].x && state.spots[7].x == state.spots[8].x) {
-        return state.spots[6].x;
-    } else if (state.spots[0].x && state.spots[0].x == state.spots[3].x && state.spots[3].x == state.spots[6].x) {
-        return state.spots[0].x;
-    } else if (state.spots[1].x && state.spots[1].x == state.spots[4].x && state.spots[4].x == state.spots[7].x) {
-        return state.spots[1].x;
-    } else if (state.spots[2].x && state.spots[2].x == state.spots[5].x && state.spots[5].x == state.spots[8].x) {
-        return state.spots[2].x;
-    } else if (state.spots[0].x && state.spots[0].x == state.spots[4].x && state.spots[4].x == state.spots[8].x) {
-        return state.spots[0].x;
-    } else if (state.spots[2].x && state.spots[2].x == state.spots[4].x && state.spots[4].x == state.spots[6].x) {
-        return state.spots[2].x;
-    } else if (no_moves_left(state)) {
+    if (state->spots[0].x && state->spots[0].x == state->spots[1].x && state->spots[1].x == state->spots[2].x) {
+        return state->spots[0].x;
+    } else if (state->spots[3].x && state->spots[3].x == state->spots[4].x && state->spots[4].x == state->spots[5].x) {
+        return state->spots[3].x;
+    } else if (state->spots[6].x && state->spots[6].x == state->spots[7].x && state->spots[7].x == state->spots[8].x) {
+        return state->spots[6].x;
+    } else if (state->spots[0].x && state->spots[0].x == state->spots[3].x && state->spots[3].x == state->spots[6].x) {
+        return state->spots[0].x;
+    } else if (state->spots[1].x && state->spots[1].x == state->spots[4].x && state->spots[4].x == state->spots[7].x) {
+        return state->spots[1].x;
+    } else if (state->spots[2].x && state->spots[2].x == state->spots[5].x && state->spots[5].x == state->spots[8].x) {
+        return state->spots[2].x;
+    } else if (state->spots[0].x && state->spots[0].x == state->spots[4].x && state->spots[4].x == state->spots[8].x) {
+        return state->spots[0].x;
+    } else if (state->spots[2].x && state->spots[2].x == state->spots[4].x && state->spots[4].x == state->spots[6].x) {
+        return state->spots[2].x;
+    } else if (no_moves_left(*state)) {
         return 3;
     }
     return 0;
@@ -356,9 +355,8 @@ struct my_node_writer {
     void operator()(std::ostream& out, Vertex v) {
         MCTS::vertex_t vertex = v;
         out << " [label=\"" << g[vertex].visits << "\"]" << std::endl;
+        Board board = *(g[vertex].state);
         if (g[vertex].has_state) {
-            Board board = g[vertex].state;
-
             out << " [label=\"" << print_board(board) << "\"]" << std::endl;
             if (terminal_board(board)) {
                 out << " [color=\"" << "black" << "\"]" << std::endl;
@@ -366,8 +364,6 @@ struct my_node_writer {
                 out << " [color=\"" << get_colour(who_played(board).x) << "\"]" << std::endl;
             }
         } else {
-            Board board = g[vertex].state;
-
             out << " [label=\"" << print_board(board) << "\"]" << std::endl;
             out << " [color=\"" << "red" << "\"]" << std::endl;
         }
@@ -419,6 +415,16 @@ void write_dot(MCTS::Graph* graph, int write_iteration) {
 template<typename vertex_properties>
 LimitedMemoryMCTS<vertex_properties>::LimitedMemoryMCTS(vertex_properties vp) {
     root = add_vertex(vp);
+}
+
+/* Destructor, deletes all remaining states */
+template<typename vertex_properties>
+LimitedMemoryMCTS<vertex_properties>::~LimitedMemoryMCTS() {
+    for (auto u : boost::make_iterator_range(boost::vertices(graph))) {
+        if (graph[u].has_state) {
+            delete graph[u].state;
+        }
+    }
 }
 
 template<typename vertex_properties>
@@ -728,10 +734,14 @@ void LimitedMemoryMCTS<vertex_properties>::root_changeover(vertex_t chosen) {
 
     for (vertex_t to_remove : garbage) {
         boost::clear_vertex(to_remove, graph);
+        if (graph[to_remove].has_state) {
+            delete graph[to_remove].state;
+        }
         boost::remove_vertex(to_remove, graph);
     }
 
     boost::clear_vertex(root, graph); // Remove old root. Remove all edges otherwise undefined behaviour occurs after remove_vertex
+    delete graph[root].state;
     boost::remove_vertex(root, graph);
 
     root = chosen;
@@ -842,6 +852,7 @@ typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex
             regenerate(*it);
         }
         if (graph[*it].equals(vp)) {
+            delete vp.state; // Dellocate the unused vp state
             return *it;
         }
     }
@@ -864,9 +875,9 @@ int main() {
     
     std::srand(time(NULL));
 
-    MCTS mcts = MCTS(VertexProperties(Board{0}, Spot{2}));
+    MCTS mcts = MCTS(VertexProperties(new Board{0}, Spot{2}));
 
-    MCTS::vertex_t vertex = mcts.get_root();
+    MCTS::vertex_t vertex;
 
     while (1) {
         int term;
@@ -898,19 +909,22 @@ int main() {
         write_dot(mcts.get_graph(), write_iteration++);
 
         vertex = mcts.make_best_play();
-        Board rootBoard = mcts.get_vertex_properties(vertex).state;
+        Board* rootBoard = new Board;
+        *rootBoard = *(mcts.get_vertex_properties(vertex).state);
         mcts.root_changeover(vertex);
 
-        std::cout << print_board(rootBoard);
+        std::cout << print_board(*rootBoard);
         std::cout.flush();
 
         term = mcts.terminal(vertex);
 
         if (term == 1) {
             std::cout << "\nGame over! AI wins\n";
+            delete rootBoard;
             break;
         } else if (term == 3) {
             std::cout << "\nGame over! Draw\n";
+            delete rootBoard;
             break;
         }
 
@@ -922,31 +936,33 @@ int main() {
             humanPlay = std::cin.get() - 48;
             while ((ch = std::cin.get()) != '\n' && ch != EOF);
             std::cout << '\n';
-            if (humanPlay > 8 || humanPlay < 0 || rootBoard.spots[humanPlay].x) {
+            if (humanPlay > 8 || humanPlay < 0 || rootBoard->spots[humanPlay].x) {
                 std::cout << "Cannot make play. Enter play: ";
             } else {
                 break;
             }
         }
 
-        rootBoard.spots[humanPlay].x = 2;
+        rootBoard->spots[humanPlay].x = 2;
+
+        std::cout << print_board(*rootBoard) << '\n';
+        std::cout.flush();
+
+        term = terminal_board(*rootBoard);
 
         vertex = mcts.make_play(vertex, VertexProperties(rootBoard, Spot{2}));
         mcts.root_changeover(vertex);
 
-        std::cout << print_board(rootBoard) << '\n';
-        std::cout.flush();
-
-        term = terminal_board(rootBoard);
-
         if (term == 2) {
             std::cout << "\nGame over! Player wins\n";
+            delete rootBoard;
             break;
         } else if (term == 3) {
             std::cout << "\nGame over! Draw\n";
+            delete rootBoard;
             break;
         }
     }
 
-    return 0;  
+    return 0;
 }
