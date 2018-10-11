@@ -1,19 +1,25 @@
 BOOST=F:\boost\include\boost-1_66
-SYMPHONY=SYMPHONY-5.6/SYMPHONY/include
-OSI=SYMPHONY-5.6/include/coin
+LP_SOLVE_INCLUDE=lp_solve
+LP_SOLVE_LIB=lp_solve
 
 default: main.cpp
-	export LD_LIBRARY_PATH=/home/james/limitedMemoryMCTS/SYMPHONY-5.6/lib
-	g++ -std=c++0x -Wall -o mcts main.cpp -lm -I$(BOOST) -I$(SYMPHONY) -I$(OSI) -L/home/james/limitedMemoryMCTS/SYMPHONY-5.6/lib -lOsiSym -lSym 
+	export LD_LIBRARY_PATH=/home/james/limitedMemoryMCTS/lp_solve
+	g++ -std=c++0x -Wall -o mcts main.cpp -lm -I$(BOOST) -I$(LP_SOLVE_INCLUDE) -L$(LP_SOLVE_LIB) -llpsolve55
 
 dots:
 	python dots.py
 
 debug: main.cpp
-	g++ -std=c++0x -Wall -o debug main.cpp -lm -g -I$(BOOST) -I$(SYMPHONY) -I$(OSI)
+	export LD_LIBRARY_PATH=/home/james/limitedMemoryMCTS/lp_solve
+	g++ -std=c++0x -Wall -o debug main.cpp -lm -g -I$(BOOST) -I$(LP_SOLVE_INCLUDE) -L$(LP_SOLVE_LIB) -llpsolve55
 
 profile: main.cpp
-	g++ -std=c++0x -Wall -o profile main.cpp -lm -pg -I$(BOOST) -O2
+	export LD_LIBRARY_PATH=/home/james/limitedMemoryMCTS/lp_solve
+	g++ -std=c++0x -Wall -o profile main.cpp -lm -pg -I$(BOOST) -I$(LP_SOLVE_INCLUDE) -L$(LP_SOLVE_LIB) -llpsolve55 -O2
+
+test: test.cpp
+	export LD_LIBRARY_PATH=/home/james/limitedMemoryMCTS/lp_solve
+	g++ -std=c++0x -Wall -o test test.cpp -I$(BOOST) -I$(LP_SOLVE_INCLUDE) -L$(LP_SOLVE_LIB) -llpsolve55
 
 all: profile debug default
 
