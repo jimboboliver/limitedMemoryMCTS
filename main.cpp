@@ -7,9 +7,10 @@
 #include <boost/graph/adjacency_list.hpp>
 #include <boost/graph/graphviz.hpp>
 #include "lp_lib.h"
+#include <float.h>
 
 #define ITERATIONS 1000
-#define MAX_STATES 5
+#define MAX_STATES 25
 
 template<typename vertex_properties>
 class LimitedMemoryMCTS {
@@ -44,7 +45,7 @@ class LimitedMemoryMCTS {
 
         vertex_t get_parent(vertex_t vertex);
 
-        std::map<vertex_t, float> prop_UCBs(vertex_t vertex, float currentUCB, int currentDepth);
+        std::map<vertex_t, double> prop_UCBs(vertex_t vertex, double currentUCB, int currentDepth);
 
         int get_child_num(vertex_t parent, vertex_t child);
 
@@ -87,6 +88,10 @@ class LimitedMemoryMCTS {
 
         void optimise_states();
 
+        bool has_state(vertex_t vertex);
+
+        double UCB(double wins, int visits, int parent_visits);
+
     private:
         Graph graph = Graph();
         int num_states = 0;
@@ -109,12 +114,12 @@ class VertexProperties {
         VertexProperties();
 
         bool has_state;
-        Board* state;
         Spot player;
 
     public: // Needed for MCTS interface
         float wins;
         int visits;
+        Board* state;
 
         unsigned int num_possible_moves();
         int terminal();
@@ -364,7 +369,6 @@ struct my_node_writer {
                 out << " [color=\"" << get_colour(who_played(board).x) << "\"]" << std::endl;
             }
         } else {
-            out << " [label=\"" << print_board(board) << "\"]" << std::endl;
             out << " [color=\"" << "red" << "\"]" << std::endl;
         }
     };
@@ -381,9 +385,9 @@ struct my_edge_writer {
     my_edge_writer(Map& g_) : g (g_) {};
     template <class Edge>
     void operator()(std::ostream& out, Edge e) {
+        MCTS::vertex_t vertex = boost::source(e, g);
         MCTS::vertex_t pointing_at = boost::target(e, g);
-        // out << " [label=\""<< g[pointing_at].wins / g[pointing_at].visits << "\"]" << std::endl;
-        out << " [label=\""<< g[pointing_at].wins << '\n' << g[pointing_at].visits << '\n' << "\"]" << std::endl;
+        out << " [label=\""<< g[pointing_at].wins / g[pointing_at].visits + 0.5 * sqrt(log(g[vertex].visits) / g[pointing_at].visits) << '\n' << "\"]" << std::endl;
     };
     Map g;
 };
@@ -441,16 +445,21 @@ typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex
 }
 
 template<typename vertex_properties>
+double LimitedMemoryMCTS<vertex_properties>::UCB(double wins, int visits, int parent_visits) {
+    return wins / visits + 0.5 * sqrt(log(parent_visits) / visits);
+}
+
+template<typename vertex_properties>
 typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex_properties>::select_child(vertex_t vertex) {
-    float max_value = 0;
-    float new_value;
+    double max_value = 0;
+    double new_value;
     vertex_t best = 0;
     out_edge_iterator ei, ei_end;
 
     for (boost::tie(ei, ei_end) = boost::out_edges(vertex, graph); ei != ei_end; ++ei) {
         vertex_t target = boost::target(*ei, graph);     
 
-        new_value = graph[target].wins / graph[target].visits + 0.5 * sqrt(log(graph[vertex].visits) / graph[target].visits);
+        new_value = UCB(graph[target].wins, graph[target].visits, graph[vertex].visits);
 
         if (new_value > max_value) {
             max_value = new_value;
@@ -490,8 +499,11 @@ typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex
 
 template<typename vertex_properties>
 void LimitedMemoryMCTS<vertex_properties>::forget_state(vertex_t vertex) {
-    graph[vertex].has_state = false;
-    num_states--;
+    if (graph[vertex].has_state) {
+        delete graph[vertex].state;
+        graph[vertex].has_state = false;
+        num_states--;
+    }
 }
 
 template<typename vertex_properties>
@@ -541,30 +553,30 @@ void LimitedMemoryMCTS<vertex_properties>::regenerate(vertex_t vertex) {
 
 /* Proportional UCB = UCB as a percentage * depth */
 template<typename vertex_properties>
-std::map<typename LimitedMemoryMCTS<vertex_properties>::vertex_t, float> LimitedMemoryMCTS<vertex_properties>::prop_UCBs(vertex_t vertex, float currentUCB, int currentDepth) {
-    std::map<vertex_t, float> proportional_UCBs;
+std::map<typename LimitedMemoryMCTS<vertex_properties>::vertex_t, double> LimitedMemoryMCTS<vertex_properties>::prop_UCBs(vertex_t vertex, double currentUCB, int currentDepth) {
+    std::map<vertex_t, double> proportional_UCBs;
 
     out_edge_iterator ei, ei_end;
-    std::list<std::pair<float, vertex_t>> UCTs;
-    float UCTsum = 0;
+    std::list<std::pair<double, vertex_t>> UCTs;
+    double UCTsum = 0;
     for (boost::tie(ei, ei_end) = boost::out_edges(vertex, graph); ei != ei_end; ++ei) {
         vertex_t target = boost::target(*ei, graph);
-        float uct = graph[target].wins / graph[target].visits + sqrt(log(graph[vertex].visits) / graph[target].visits);
-        if (std::isnan(uct)) {
-            uct = 0;
+        double uct = UCB(graph[target].wins, graph[target].visits, graph[vertex].visits);
+        if (std::isnan(uct) || uct == 0) {
+            uct = 0.00001; // Really small number more than 0
         }
         UCTsum += uct;
         UCTs.push_back(std::make_pair(uct, target));
     }
 
-    for (typename std::list<std::pair<float, vertex_t>>::iterator it = UCTs.begin(); it != UCTs.end(); it++) {
-        float new_UCB = currentUCB * ((*it).first / UCTsum);
+    for (typename std::list<std::pair<double, vertex_t>>::iterator it = UCTs.begin(); it != UCTs.end(); it++) {
+        double new_UCB = currentUCB * ((*it).first / UCTsum);
         if (std::isnan(new_UCB)) {
             new_UCB = 0;
         }
         proportional_UCBs[(*it).second] = new_UCB * currentDepth;
         if (!is_leaf((*it).second)) { // Keep walking tree
-            std::map<vertex_t, float> other_UCBs = prop_UCBs((*it).second, new_UCB, currentDepth + 1);
+            std::map<vertex_t, double> other_UCBs = prop_UCBs((*it).second, new_UCB, currentDepth + 1);
             proportional_UCBs.insert(other_UCBs.begin(), other_UCBs.end());
         }
     }
@@ -574,100 +586,106 @@ std::map<typename LimitedMemoryMCTS<vertex_properties>::vertex_t, float> Limited
 
 template<typename vertex_properties>
 void LimitedMemoryMCTS<vertex_properties>::optimise_states() {
-    std::map<vertex_t, float> prop_UCB = prop_UCBs(root, 1, 1);
+    std::map<vertex_t, double> prop_UCB = prop_UCBs(root, 1, 1);
 
     lprec *lp;
-    int Ncol, *colno = NULL, j, ret = 0;
+    int Ncol, *colno = NULL, j;
     REAL *row = NULL;
 
     /* We will build the model row by row. We start with creating a model with 0 rows and Ncol columns */
     Ncol = prop_UCB.size(); /* there are Ncol variables in the model */
     lp = make_lp(0, Ncol);
-    if (lp == NULL) {
-        ret = 1; /* couldn't construct a new model... */
+    // Set all variables to binary
+    for (j = 1; j <= Ncol; j++) {
+        set_binary(lp, j, TRUE);
     }
 
-    if (ret == 0) {
-        // Set all variables to binary
-        for (j = 1; j <= Ncol; j++) {
-            set_binary(lp, j, TRUE);
-        }
+    /* create space large enough for one row */
+    colno = new int[Ncol];
+    row = new REAL[Ncol];
 
-        /* create space large enough for one row */
-        colno = new int[Ncol];
-        row = new REAL[Ncol];
-        if ((colno == NULL) || (row == NULL)) {
-            ret = 2;
-        }
+    set_add_rowmode(lp, TRUE);  /* makes building the model faster if it is done rows by row */
+
+    /* construct first row (a + b + c + d + e + f <= MAX_STATES - 1) */
+    for (j = 0; j < Ncol; j++) {
+        colno[j] = j + 1;
+        row[j] = 1;
     }
 
-    if (ret == 0) {
-        set_add_rowmode(lp, TRUE);  /* makes building the model faster if it is done rows by row */
+    /* add the row to lpsolve */
+    add_constraintex(lp, j, row, colno, LE, MAX_STATES - 1);
 
-        /* construct first row (a + b + c + d + e + f <= 1) */
-        for (j = 0; j < Ncol; j++) {
+    set_add_rowmode(lp, FALSE); /* rowmode should be turned off again when done building the model */
+
+    /* set the objective function (SUM(state * proportional UCB)) */
+    j = 0;
+    for (auto u : boost::make_iterator_range(boost::vertices(graph))) {
+        if (u != root) {
             colno[j] = j + 1;
-            row[j] = 1;
-        }
-
-        /* add the row to lpsolve */
-        if (!add_constraintex(lp, j, row, colno, LE, MAX_STATES - 1)) {
-            ret = 3;
+            row[j++] = prop_UCB[u];
         }
     }
 
-    if (ret == 0) {
-        set_add_rowmode(lp, FALSE); /* rowmode should be turned off again when done building the model */
+    /* set the objective in lpsolve */
+    set_obj_fnex(lp, j, row, colno);
 
-        /* set the objective function (SUM(state * proportional UCB)) */
-        j = 0;
-        for (auto u : boost::make_iterator_range(boost::vertices(graph))) {
-            if (u != root) {
-                colno[j] = j + 1;
-                row[j++] = prop_UCB[u];
+    /* set the object direction to maximize */
+    set_maxim(lp);
+
+    /* just out of curiousity, now show the model in lp format on screen */
+    /* this only works if this is a console application. If not, use write_lp and a filename */
+    // write_LP(lp, stdout);
+    /* write_lp(lp, "model.lp"); */
+
+    /* I only want to see important messages on screen while solving */
+    set_verbose(lp, IMPORTANT);
+
+    /* Now let lpsolve calculate a solution */
+    solve(lp);
+
+    /* variable values */
+    get_variables(lp, row);
+    std::map<vertex_t, int> states = std::map<vertex_t, int>();
+    std::vector<vertex_t> leaves = std::vector<vertex_t>();
+    j = 0;
+    for (auto u : boost::make_iterator_range(boost::vertices(graph))) {
+        if (u != root) {
+            states[u] = row[j++];
+        }
+        if (is_leaf(u)) {
+            leaves.push_back(u);
+        }
+    }
+    states[root] = 1;
+
+    // For each path follow it down and regenerate the states required
+    std::vector<vertex_t> path = std::vector<vertex_t>();
+    for (auto it = leaves.begin(); it != leaves.end(); it++) {
+        vertex_t vertex = *it;
+        while (vertex != root) { // create path to root
+            path.push_back(vertex);
+            vertex = get_parent(vertex);
+        }
+        path.push_back(root);
+
+        vertex_t child;
+        // Follow path and regenerate states
+        for (int i = path.size() - 1; i > 0; i--) {
+            vertex_t parent = path[i];
+            child = path[i - 1];
+
+            if (i == 1 && !states[child]) { // ensure last child's state is forgotten if needed
+                forget_state(child);
+            } else if (!graph[child].has_state) { // Regenerate child state
+                graph[parent].regenerate_child(get_child_num(parent, child), &graph[child]);
+                num_states++;
+            }
+
+            if (!states[parent]) { // parent should not keep state
+                forget_state(parent);
             }
         }
-
-        /* set the objective in lpsolve */
-        if (!set_obj_fnex(lp, j, row, colno)) {
-            ret = 4;
-        }
-    }
-
-    if (ret == 0) {
-        /* set the object direction to maximize */
-        set_maxim(lp);
-
-        /* just out of curiousity, now show the model in lp format on screen */
-        /* this only works if this is a console application. If not, use write_lp and a filename */
-        // write_LP(lp, stdout);
-        /* write_lp(lp, "model.lp"); */
-
-        /* I only want to see important messages on screen while solving */
-        set_verbose(lp, IMPORTANT);
-
-        /* Now let lpsolve calculate a solution */
-        ret = solve(lp);
-        if (ret == OPTIMAL) {
-            ret = 0;
-        } else {
-            ret = 5;
-        }
-    }
-
-    if (ret == 0) {
-        /* a solution is calculated, now lets get some results */
-
-        // /* objective value */
-        // printf("Objective value: %f\n", get_objective(lp));
-
-        // /* variable values */
-        // get_variables(lp, row);
-        // for (j = 0; j < Ncol; j++) {
-        //     printf("%s: %f\n", get_col_name(lp, j + 1), row[j]);
-        // }
-
-        /* we are done now */
+        path.clear();
     }
 
     /* free allocated memory */
@@ -682,6 +700,8 @@ void LimitedMemoryMCTS<vertex_properties>::optimise_states() {
         /* clean up such that all used memory by lpsolve is freed */
         delete_lp(lp);
     }
+
+    // std::cout << num_states << '\n';
 }
 
 /* Requires 2 spare states */
@@ -703,7 +723,7 @@ typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex
 
 template<typename vertex_properties>
 bool LimitedMemoryMCTS<vertex_properties>::is_leaf(vertex_t vertex) {
-    return !boost::in_degree(vertex, graph) || !boost::out_degree(vertex, graph);
+    return !boost::out_degree(vertex, graph);
 }
 
 template<typename vertex_properties>
@@ -771,8 +791,8 @@ std::list<typename LimitedMemoryMCTS<vertex_properties>::vertex_t> LimitedMemory
 template<typename vertex_properties>
 typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex_properties>::make_best_play() {
     vertex_t root = get_root();
-    float max_value = -1;
-    float new_value;
+    double max_value = -1;
+    double new_value;
     int i = 0;
     vertex_t best = 0;
     out_edge_iterator ei, ei_end;
@@ -870,6 +890,11 @@ int LimitedMemoryMCTS<vertex_properties>::get_num_states() {
     return num_states;
 }
 
+template<typename vertex_properties>
+bool LimitedMemoryMCTS<vertex_properties>::has_state(vertex_t vertex) {
+    return graph[vertex].has_state;
+}
+
 int main() {
     int write_iteration = 0;
     
@@ -889,6 +914,10 @@ int main() {
             // Select
             vertex = mcts.select(vertex);
 
+            if (!mcts.has_state(vertex)) {
+                mcts.regenerate(vertex);
+            }
+
             // If not terminal
             if (!(term = mcts.terminal(vertex))) {
                 // Expand
@@ -904,6 +933,8 @@ int main() {
             mcts.backpropagate(vertex, term);
 
             mcts.optimise_states();
+
+            // write_dot(mcts.get_graph(), it);
         }
         
         write_dot(mcts.get_graph(), write_iteration++);
