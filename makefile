@@ -3,19 +3,19 @@ LP_SOLVE_INCLUDE=lp_solve
 LP_SOLVE_LIB=lp_solve
 
 default: main.cpp
-	g++ -std=c++0x -Wall -o mcts main.cpp -lm -I$(BOOST) -I$(LP_SOLVE_INCLUDE) -L$(LP_SOLVE_LIB) -llpsolve55 -O2
+	g++ -std=c++17 -Wall -o mcts main.cpp -lm -I$(BOOST) -I$(LP_SOLVE_INCLUDE) -L$(LP_SOLVE_LIB) -llpsolve55
 
 dots:
 	python dots.py
 
 debug: main.cpp
-	g++ -std=c++0x -Wall -o debug main.cpp -lm -g -I$(BOOST) -I$(LP_SOLVE_INCLUDE) -L$(LP_SOLVE_LIB) -llpsolve55
+	g++ -std=c++17 -Wall -o debug main.cpp -lm -g -I$(BOOST) -I$(LP_SOLVE_INCLUDE) -L$(LP_SOLVE_LIB) -llpsolve55
 
 profile: main.cpp
-	g++ -std=c++0x -Wall -o profile main.cpp -lm -pg -I$(BOOST) -I$(LP_SOLVE_INCLUDE) -L$(LP_SOLVE_LIB) -llpsolve55 -O2
+	g++ -std=c++17 -Wall -o profile main.cpp -lm -pg -I$(BOOST) -I$(LP_SOLVE_INCLUDE) -L$(LP_SOLVE_LIB) -llpsolve55 -O2
 
 test: test.cpp
-	g++ -std=c++0x -Wall -o test test.cpp -I$(BOOST) -I$(LP_SOLVE_INCLUDE) -L$(LP_SOLVE_LIB) -llpsolve55
+	g++ -std=c++17 -Wall -o test test.cpp -I$(BOOST) -I$(LP_SOLVE_INCLUDE) -L$(LP_SOLVE_LIB) -llpsolve55
 
 all: profile debug default
 

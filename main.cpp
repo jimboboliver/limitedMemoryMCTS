@@ -10,7 +10,7 @@
 #include <float.h>
 
 #define ITERATIONS 1000
-#define MAX_STATES 25
+#define MAX_STATES 10
 
 template<typename vertex_properties>
 class LimitedMemoryMCTS {
@@ -120,13 +120,16 @@ class VertexProperties {
         float wins;
         int visits;
         Board* state;
+        unsigned int possible_children;
 
-        unsigned int num_possible_moves();
         int terminal();
         VertexProperties generate_child(int playNum);
         void regenerate_child(int playNum, VertexProperties* child);
         int playout();
         bool equals(VertexProperties otherVP);
+
+    private:
+        void num_possible_moves();
 };
 
 VertexProperties::VertexProperties() {
@@ -135,6 +138,7 @@ VertexProperties::VertexProperties() {
     has_state = false;
     wins = 0;
     visits = 0;
+    possible_children = 0;
 }
 
 VertexProperties::VertexProperties(Board* state_stored, Spot last_player) {
@@ -143,16 +147,16 @@ VertexProperties::VertexProperties(Board* state_stored, Spot last_player) {
     has_state = true;
     wins = 0;
     visits = 0;
+    possible_children = 0;
+    num_possible_moves();
 }
 
-unsigned int VertexProperties::num_possible_moves() {
-    unsigned int num_moves = 0;
+void VertexProperties::num_possible_moves() {
     for (int i = 0; i < 9; i++) {
         if (!state->spots[i].x) { // If the spot is empty it's a possible move
-            num_moves++;
+            possible_children++;
         }
     }
-    return num_moves;
 }
 
 VertexProperties VertexProperties::generate_child(int playNum) {
@@ -353,6 +357,8 @@ std::string get_colour(int who) {
     return "black";
 }
 
+MCTS::vertex_t lastAdded;
+
 template <typename Map>
 struct my_node_writer {
     my_node_writer(Map& g_) : g (g_) {};
@@ -363,13 +369,21 @@ struct my_node_writer {
         Board board = *(g[vertex].state);
         if (g[vertex].has_state) {
             out << " [label=\"" << print_board(board) << "\"]" << std::endl;
-            if (terminal_board(board)) {
-                out << " [color=\"" << "black" << "\"]" << std::endl;
+            if (vertex == lastAdded) {
+                out << " [color=\"" << "purple" << "\"]" << std::endl;
             } else {
-                out << " [color=\"" << get_colour(who_played(board).x) << "\"]" << std::endl;
+                if (terminal_board(board)) {
+                    out << " [color=\"" << "black" << "\"]" << std::endl;
+                } else {
+                    out << " [color=\"" << get_colour(who_played(board).x) << "\"]" << std::endl;
+                }
             }
         } else {
-            out << " [color=\"" << "red" << "\"]" << std::endl;
+            if (vertex == lastAdded) {
+                out << " [color=\"" << "purple" << "\"]" << std::endl;
+            } else {
+                out << " [color=\"" << "red" << "\"]" << std::endl;
+            }
         }
     };
     Map g;
@@ -387,7 +401,8 @@ struct my_edge_writer {
     void operator()(std::ostream& out, Edge e) {
         MCTS::vertex_t vertex = boost::source(e, g);
         MCTS::vertex_t pointing_at = boost::target(e, g);
-        out << " [label=\""<< g[pointing_at].wins / g[pointing_at].visits + 0.5 * sqrt(log(g[vertex].visits) / g[pointing_at].visits) << '\n' << "\"]" << std::endl;
+        // out << " [label=\""<< g[pointing_at].wins / g[pointing_at].visits + 0.5 * sqrt(log(g[vertex].visits) / g[pointing_at].visits) << '\n' << "\"]" << std::endl;
+        out << " [label=\""<< g[pointing_at].wins << '\n' << g[pointing_at].visits << "\"]" << std::endl;
     };
     Map g;
 };
@@ -409,7 +424,7 @@ void write_dot(MCTS::Graph* graph, int write_iteration) {
     // represent graph in DOT format
     std::ofstream myfile;
     std::ostringstream ss;
-    ss << "graph" << write_iteration << ".dot";
+    ss << "graph/graph" << write_iteration << ".dot";
     myfile.open(ss.str().c_str());
 
     boost::write_graphviz(myfile, *graph, node_writer(*graph), edge_writer(*graph), w, boost::make_assoc_property_map(ids));
@@ -472,7 +487,7 @@ typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex
 
 template<typename vertex_properties>
 bool LimitedMemoryMCTS<vertex_properties>::has_unborn(vertex_t vertex) {
-    return graph[vertex].num_possible_moves() != boost::out_degree(vertex, graph);
+    return graph[vertex].possible_children != boost::out_degree(vertex, graph);
 }
 
 template<typename vertex_properties>
@@ -570,7 +585,8 @@ std::map<typename LimitedMemoryMCTS<vertex_properties>::vertex_t, double> Limite
     }
 
     for (typename std::list<std::pair<double, vertex_t>>::iterator it = UCTs.begin(); it != UCTs.end(); it++) {
-        double new_UCB = currentUCB * ((*it).first / UCTsum);
+        // double new_UCB = currentUCB * ((*it).first / UCTsum);
+        double new_UCB = (*it).first;
         if (std::isnan(new_UCB)) {
             new_UCB = 0;
         }
@@ -717,6 +733,8 @@ typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex
     boost::add_edge(parent, child, graph);
 
     num_states++;
+
+    lastAdded = child;
 
     return child;
 }
@@ -896,7 +914,7 @@ bool LimitedMemoryMCTS<vertex_properties>::has_state(vertex_t vertex) {
 }
 
 int main() {
-    int write_iteration = 0;
+    // int write_iteration = 0;
     
     std::srand(time(NULL));
 
@@ -933,11 +951,11 @@ int main() {
             mcts.backpropagate(vertex, term);
 
             mcts.optimise_states();
-
-            // write_dot(mcts.get_graph(), it);
+            write_dot(mcts.get_graph(), it);
+            while (std::cin.get() != '\n');
         }
         
-        write_dot(mcts.get_graph(), write_iteration++);
+        // write_dot(mcts.get_graph(), write_iteration++);
 
         vertex = mcts.make_best_play();
         Board* rootBoard = new Board;
