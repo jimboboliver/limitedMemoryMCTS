@@ -6,11 +6,30 @@
 #include <vector>
 #include <boost/graph/adjacency_list.hpp>
 #include <boost/graph/graphviz.hpp>
-#include "lp_lib.h"
 #include <float.h>
 
+#include <iomanip>
+#include <fstream>
+
+#include "CoinPragma.hpp"
+#include "CoinTime.hpp"
+#include "CoinError.hpp"
+
+#include "BonOsiTMINLPInterface.hpp"
+#include "BonIpoptSolver.hpp"
+#include "BonCbc.hpp"
+#include "BonBonminSetup.hpp"
+
+#include "BonOACutGenerator2.hpp"
+#include "BonEcpCuts.hpp"
+#include "BonOaNlpOptim.hpp"
+
+#include "BonAmplInterface.hpp"
+
+#include "BonTMINLP.hpp"
+
 #define ITERATIONS 1000
-#define MAX_STATES 10
+#define MAX_STATES 14
 
 template<typename vertex_properties>
 class LimitedMemoryMCTS {
@@ -45,7 +64,7 @@ class LimitedMemoryMCTS {
 
         vertex_t get_parent(vertex_t vertex);
 
-        std::map<vertex_t, double> prop_UCBs(vertex_t vertex, double currentUCB, int currentDepth);
+        std::map<vertex_t, std::pair<double, double>> prop_UCBs(vertex_t vertex, double currentUCB, int currentDepth);
 
         int get_child_num(vertex_t parent, vertex_t child);
 
@@ -92,10 +111,15 @@ class LimitedMemoryMCTS {
 
         double UCB(double wins, int visits, int parent_visits);
 
+        void reset_num_regenerated();
+
+        int get_num_regenerated();
+
     private:
         Graph graph = Graph();
         int num_states = 0;
         vertex_t root;
+        int num_regenerated = 0;
 };
 
 /* Game stuff */
@@ -399,7 +423,7 @@ struct my_edge_writer {
     my_edge_writer(Map& g_) : g (g_) {};
     template <class Edge>
     void operator()(std::ostream& out, Edge e) {
-        MCTS::vertex_t vertex = boost::source(e, g);
+        // MCTS::vertex_t vertex = boost::source(e, g);
         MCTS::vertex_t pointing_at = boost::target(e, g);
         // out << " [label=\""<< g[pointing_at].wins / g[pointing_at].visits + 0.5 * sqrt(log(g[vertex].visits) / g[pointing_at].visits) << '\n' << "\"]" << std::endl;
         out << " [label=\""<< g[pointing_at].wins << '\n' << g[pointing_at].visits << "\"]" << std::endl;
@@ -541,26 +565,27 @@ int LimitedMemoryMCTS<vertex_properties>::get_child_num(vertex_t parent, vertex_
 /* Requires 2 spare states */
 template<typename vertex_properties>
 void LimitedMemoryMCTS<vertex_properties>::regenerate(vertex_t vertex) {
-    std::list<vertex_t> path = std::list<vertex_t>();
+    std::vector<vertex_t> path = std::vector<vertex_t>();
     vertex_t parent = get_parent(vertex);
     
-    path.push_front(vertex);
-    path.push_front(parent);
+    path.push_back(vertex);
+    path.push_back(parent);
     while (!graph[parent].has_state) {
         parent = get_parent(parent);
-        path.push_front(parent);
+        path.push_back(parent);
     }
-    typename std::list<vertex_t>::iterator test = path.end();
-    --test;
+    typename std::vector<vertex_t>::iterator test = path.begin();
+    ++test;
     vertex_t child;
-    for (typename std::list<vertex_t>::iterator it = path.begin(); it != test; it++) {
+    for (typename std::vector<vertex_t>::iterator it = path.end(); it-- != test;) {
         parent = *it;
-        it++;
-        child = *it;
         it--;
+        child = *it;
+        it++;
         graph[parent].regenerate_child(get_child_num(parent, child), &graph[child]);
+        num_regenerated++;
         num_states++;
-        if (parent != root) { // Forget the parent again if it's not the root
+        if (parent != path[path.size() - 1]) { // Forget the parent again if it's not the node which we are regenerating from
             forget_state(parent);
         }
     }
@@ -568,8 +593,8 @@ void LimitedMemoryMCTS<vertex_properties>::regenerate(vertex_t vertex) {
 
 /* Proportional UCB = UCB as a percentage * depth */
 template<typename vertex_properties>
-std::map<typename LimitedMemoryMCTS<vertex_properties>::vertex_t, double> LimitedMemoryMCTS<vertex_properties>::prop_UCBs(vertex_t vertex, double currentUCB, int currentDepth) {
-    std::map<vertex_t, double> proportional_UCBs;
+std::map<typename LimitedMemoryMCTS<vertex_properties>::vertex_t, std::pair<double, double>> LimitedMemoryMCTS<vertex_properties>::prop_UCBs(vertex_t vertex, double currentUCB, int currentDepth) {
+    std::map<vertex_t, std::pair<double, double>> proportional_UCBs;
 
     out_edge_iterator ei, ei_end;
     std::list<std::pair<double, vertex_t>> UCTs;
@@ -585,14 +610,14 @@ std::map<typename LimitedMemoryMCTS<vertex_properties>::vertex_t, double> Limite
     }
 
     for (typename std::list<std::pair<double, vertex_t>>::iterator it = UCTs.begin(); it != UCTs.end(); it++) {
-        // double new_UCB = currentUCB * ((*it).first / UCTsum);
-        double new_UCB = (*it).first;
+        double new_UCB = currentUCB * ((*it).first / UCTsum);
+        // double new_UCB = (*it).first;
         if (std::isnan(new_UCB)) {
             new_UCB = 0;
         }
-        proportional_UCBs[(*it).second] = new_UCB * currentDepth;
+        proportional_UCBs[(*it).second] = std::make_pair(new_UCB, new_UCB * currentDepth);
         if (!is_leaf((*it).second)) { // Keep walking tree
-            std::map<vertex_t, double> other_UCBs = prop_UCBs((*it).second, new_UCB, currentDepth + 1);
+            std::map<vertex_t, std::pair<double, double>> other_UCBs = prop_UCBs((*it).second, new_UCB, currentDepth + 1);
             proportional_UCBs.insert(other_UCBs.begin(), other_UCBs.end());
         }
     }
@@ -600,76 +625,429 @@ std::map<typename LimitedMemoryMCTS<vertex_properties>::vertex_t, double> Limite
     return proportional_UCBs;
 }
 
+using namespace  Ipopt;
+using namespace Bonmin;
+
+class MyTMINLP : public TMINLP {
+    public:
+        /// Default constructor.
+        MyTMINLP(int num, std::map<MCTS::vertex_t, std::pair<double, double>> propucb, std::map<MCTS::vertex_t, int> v_to_i, std::map<int, MCTS::vertex_t> i_to_v, std::vector<std::vector<int>> p, double* r);
+        
+        /// virtual destructor.
+        virtual ~MyTMINLP(){}
+
+            // /** Copy constructor.*/
+        // MyTMINLP(const MyTMINLP &other):printSol_(other.printSol_){}
+        /** Assignment operator. no data = nothing to assign*/
+        //MyTMINLP& operator=(const MyTMINLP&) {}
+
+        
+        /** \name Overloaded functions specific to a TMINLP.*/
+        //@{
+        /** Pass the type of the variables (INTEGER, BINARY, CONTINUOUS) to the optimizer.
+             \param n size of var_types (has to be equal to the number of variables in the problem)
+        \param var_types types of the variables (has to be filled by function).
+        */
+        virtual bool get_variables_types(Index n, VariableType* var_types);
+        
+        /** Pass info about linear and nonlinear variables.*/
+        virtual bool get_variables_linearity(Index n, Ipopt::TNLP::LinearityType* var_types);
+
+        /** Pass the type of the constraints (LINEAR, NON_LINEAR) to the optimizer.
+         \param m size of const_types (has to be equal to the number of constraints in the problem)
+        \param const_types types of the constraints (has to be filled by function).
+        */
+        virtual bool get_constraints_linearity(Index m, Ipopt::TNLP::LinearityType* const_types);
+        //@}  
+            
+        /** \name Overloaded functions defining a TNLP.
+             * This group of function implement the various elements needed to define and solve a TNLP.
+             * They are the same as those in a standard Ipopt NLP problem*/
+        //@{
+        /** Method to pass the main dimensions of the problem to Ipopt.
+                \param n number of variables in problem.
+                \param m number of constraints.
+                \param nnz_jac_g number of nonzeroes in Jacobian of constraints system.
+                \param nnz_h_lag number of nonzeroes in Hessian of the Lagrangean.
+                \param index_style indicate wether arrays are numbered from 0 (C-style) or
+                from 1 (Fortran).
+                \return true in case of success.*/
+        virtual bool get_nlp_info(Index& n, Index&m, Index& nnz_jac_g,
+                                    Index& nnz_h_lag, TNLP::IndexStyleEnum& index_style);
+        
+        /** Method to pass the bounds on variables and constraints to Ipopt. 
+             \param n size of x_l and x_u (has to be equal to the number of variables in the problem)
+            \param x_l lower bounds on variables (function should fill it).
+            \param x_u upper bounds on the variables (function should fill it).
+            \param m size of g_l and g_u (has to be equal to the number of constraints in the problem).
+            \param g_l lower bounds of the constraints (function should fill it).
+            \param g_u upper bounds of the constraints (function should fill it).
+        \return true in case of success.*/
+        virtual bool get_bounds_info(Index n, Number* x_l, Number* x_u,
+                                    Index m, Number* g_l, Number* g_u);
+        
+        /** Method to to pass the starting point for optimization to Ipopt.
+            \param init_x do we initialize primals?
+            \param x pass starting primal points (function should fill it if init_x is 1).
+            \param m size of lambda (has to be equal to the number of constraints in the problem).
+            \param init_lambda do we initialize duals of constraints? 
+            \param lambda lower bounds of the constraints (function should fill it).
+            \return true in case of success.*/
+        virtual bool get_starting_point(Index n, bool init_x, Number* x,
+                                        bool init_z, Number* z_L, Number* z_U,
+                                        Index m, bool init_lambda,
+                                        Number* lambda);
+        
+        /** Method which compute the value of the objective function at point x.
+            \param n size of array x (has to be the number of variables in the problem).
+            \param x point where to evaluate.
+            \param new_x Is this the first time we evaluate functions at this point? 
+            (in the present context we don't care).
+            \param obj_value value of objective in x (has to be computed by the function).
+            \return true in case of success.*/
+        virtual bool eval_f(Index n, const Number* x, bool new_x, Number& obj_value);
+
+        /** Method which compute the gradient of the objective at a point x.
+            \param n size of array x (has to be the number of variables in the problem).
+            \param x point where to evaluate.
+            \param new_x Is this the first time we evaluate functions at this point? 
+            (in the present context we don't care).
+            \param grad_f gradient of objective taken in x (function has to fill it).
+            \return true in case of success.*/
+        virtual bool eval_grad_f(Index n, const Number* x, bool new_x, Number* grad_f);
+
+        /** Method which compute the value of the functions defining the constraints at a point
+            x.
+            \param n size of array x (has to be the number of variables in the problem).
+            \param x point where to evaluate.
+            \param new_x Is this the first time we evaluate functions at this point? 
+            (in the present context we don't care).
+            \param m size of array g (has to be equal to the number of constraints in the problem)
+            \param grad_f values of the constraints (function has to fill it).
+            \return true in case of success.*/
+        virtual bool eval_g(Index n, const Number* x, bool new_x, Index m, Number* g);
+
+        /** Method to compute the Jacobian of the functions defining the constraints.
+            If the parameter values==NULL fill the arrays iCol and jRow which store the position of
+            the non-zero element of the Jacobian.
+            If the paramenter values!=NULL fill values with the non-zero elements of the Jacobian.
+            \param n size of array x (has to be the number of variables in the problem).
+            \param x point where to evaluate.
+            \param new_x Is this the first time we evaluate functions at this point? 
+            (in the present context we don't care).
+            \param m size of array g (has to be equal to the number of constraints in the problem)
+            \param grad_f values of the constraints (function has to fill it).
+            \return true in case of success.*/
+        virtual bool eval_jac_g(Index n, const Number* x, bool new_x,
+                                Index m, Index nele_jac, Index* iRow, Index *jCol,
+                                Number* values);
+        
+        /** Method to compute the Jacobian of the functions defining the constraints.
+            If the parameter values==NULL fill the arrays iCol and jRow which store the position of
+            the non-zero element of the Jacobian.
+            If the paramenter values!=NULL fill values with the non-zero elements of the Jacobian.
+            \param n size of array x (has to be the number of variables in the problem).
+            \param x point where to evaluate.
+            \param new_x Is this the first time we evaluate functions at this point? 
+            (in the present context we don't care).
+            \param m size of array g (has to be equal to the number of constraints in the problem)
+            \param grad_f values of the constraints (function has to fill it).
+            \return true in case of success.*/
+        virtual bool eval_h(Index n, const Number* x, bool new_x,
+                            Number obj_factor, Index m, const Number* lambda,
+                            bool new_lambda, Index nele_hess, Index* iRow,
+                            Index* jCol, Number* values);
+
+        
+        /** Method called by Ipopt at the end of optimization.*/  
+        virtual void finalize_solution(TMINLP::SolverReturn status,
+                                        Index n, const Number* x, Number obj_value);
+        
+        //@}
+
+        virtual const SosInfo * sosConstraints() const{return NULL;}
+        virtual const BranchingInfo* branchingInfo() const{return NULL;}
+        
+        
+    private:
+        int num_vertices;
+        std::map<MCTS::vertex_t, std::pair<double, double>> prop_UCB;
+        std::map<MCTS::vertex_t, int> vertices_to_index;
+        std::map<int, MCTS::vertex_t> index_to_vertex;
+        std::vector<std::vector<int>> paths;
+        double* result;
+};
+
+/* Bonmin stuff */
+MyTMINLP::MyTMINLP(int num, std::map<MCTS::vertex_t, std::pair<double, double>> propucb, std::map<MCTS::vertex_t, int> v_to_i, std::map<int, MCTS::vertex_t> i_to_v, std::vector<std::vector<int>> p, double* r) {
+    num_vertices = num;
+    vertices_to_index = v_to_i;
+    index_to_vertex = i_to_v;
+    paths = p;
+    prop_UCB = propucb;
+    result = r;
+}
+
+bool MyTMINLP::get_variables_types(Index n, VariableType* var_types)
+{
+    for (int i = 0; i < num_vertices; i++) {
+        var_types[i] = BINARY;
+    }
+
+    return true;
+}
+
+bool MyTMINLP::get_variables_linearity(Index n, Ipopt::TNLP::LinearityType* var_types)
+{
+    for (int i = 0; i < num_vertices; i++) {
+        var_types[i] = Ipopt::TNLP::LINEAR;
+    }
+
+    return true;
+}
+
+bool MyTMINLP::get_constraints_linearity(Index m, Ipopt::TNLP::LinearityType* const_types)
+{
+    assert (m==1);
+    const_types[0] = Ipopt::TNLP::LINEAR;
+    return true;
+}
+bool MyTMINLP::get_nlp_info(Index& n, Index&m, Index& nnz_jac_g,
+                       Index& nnz_h_lag, TNLP::IndexStyleEnum& index_style)
+{
+    n = num_vertices;//number of variables
+    m = 1;//number of constraints
+    nnz_jac_g = num_vertices;//number of non zeroes in Jacobian
+    nnz_h_lag = 0;//number of non zeroes in Hessian of Lagrangean
+    index_style = TNLP::FORTRAN_STYLE;
+    return true;
+}
+
+bool MyTMINLP::get_bounds_info(Index n, Number* x_l, Number* x_u,
+                            Index m, Number* g_l, Number* g_u)
+{
+    assert(n==num_vertices);
+    assert(m==1);
+
+    for (int i = 0; i < num_vertices; i++) {
+        x_l[i] = 0.;
+        x_u[i] = 1.;  
+    }
+
+    g_l[0] = -DBL_MAX;
+    g_u[0] = MAX_STATES - 4;
+
+    return true;
+}
+
+bool MyTMINLP::get_starting_point(Index n, bool init_x, Number* x,
+                             bool init_z, Number* z_L, Number* z_U,
+                             Index m, bool init_lambda,
+                             Number* lambda)
+{
+    assert(n==num_vertices);
+    assert(m==1);
+    
+    assert(init_x);
+    assert(!init_lambda);
+
+    for (int i = 0; i < num_vertices; i++) {
+        x[i] = 1.0;
+    }
+
+    return true;
+}
+
+bool MyTMINLP::eval_f(Index n, const Number* x, bool new_x, Number& obj_value)
+{
+    assert(n==num_vertices);
+    obj_value = 0;
+    for (auto path : paths) { // non-linear path iteration part
+        double states = 0;
+        double prev_prod = 1;
+        for (int i : path) {
+            prev_prod *= x[i];
+            states += prev_prod;
+        }
+        obj_value -= prop_UCB[index_to_vertex[path[0]]].first * (path.size() - states); // multiply proportional UCB of leaf by number of nodes needed to regenerate in path
+    }
+
+    for (int i = 0; i < num_vertices; i++) { // linear whole tree part
+        obj_value -= prop_UCB[index_to_vertex[i]].second * (1 - x[i]); // multiply (proportional UCB * depth) by state
+    }
+
+    // obj_value = -(0.30241*(2 - x[2] - x[2]*x[0]) + 0.2278*(2 - x[3] - x[3]*x[0]) + 0.2807*(2 - x[4] - x[4]*x[1]) + 0.18909*(2 - x[5] - x[5]*x[1]));
+    return true;
+}
+
+bool MyTMINLP::eval_grad_f(Index n, const Number* x, bool new_x, Number* grad_f)
+{
+    assert(n==num_vertices);
+
+    for (int j = 0; j < num_vertices; j++) {
+        grad_f[j] = 0;
+        for (auto path : paths) { // non-linear path iteration part
+            double states = 0;
+            double prev_prod = 1;
+            bool in_path = false;
+            for (int i : path) {
+                if (i == j) { // term contains the variable we are differentiating by
+                    in_path = true;
+                } else {
+                    prev_prod *= x[i];
+                }
+                if (in_path) { // subsequent terms all will have the variable so add them to the sum
+                    states += prev_prod;
+                }
+            }
+            grad_f[j] += prop_UCB[index_to_vertex[path[0]]].first * states; // add this component of the gradient (non-linear component)
+        }
+        grad_f[j] += prop_UCB[index_to_vertex[j]].second; // linear component
+    }
+
+    return true;
+}
+
+bool MyTMINLP::eval_g(Index n, const Number* x, bool new_x, Index m, Number* g)
+{
+    assert(n==num_vertices);
+    assert(m==1);
+    
+    g[0] = num_vertices;
+
+    for (int i = 0; i < num_vertices; i++) {
+        g[0] -= x[i];
+    }
+    
+    return true;
+}
+
+bool MyTMINLP::eval_jac_g(Index n, const Number* x, bool new_x,
+                     Index m, Index nnz_jac, Index* iRow, Index *jCol,
+                     Number* values)
+{
+    assert(n==num_vertices);
+    assert(nnz_jac == num_vertices);
+    if(values == NULL) {
+
+        for (int i = 0; i < num_vertices; i++) {
+            iRow[i] = 1;
+            jCol[i] = i + 1;
+        }
+        
+        return true;
+    }
+    else {
+
+        for (int i = 0; i < num_vertices; i++) {
+            values[i] = -1;
+        }
+        
+        return true;
+    }
+}
+
+bool MyTMINLP::eval_h(Index n, const Number* x, bool new_x,
+                 Number obj_factor, Index m, const Number* lambda,
+                 bool new_lambda, Index nele_hess, Index* iRow,
+                 Index* jCol, Number* values)
+{
+    assert (n==num_vertices);
+    assert (m==1);
+    assert(nele_hess==0);
+    if(values==NULL)
+    {
+        // just zeroes in Hessian
+    }
+    else {
+
+    }
+    return true;
+}
+
+void MyTMINLP::finalize_solution(TMINLP::SolverReturn status, Index n, const Number* x, Number obj_value)
+{
+    for (int i = 0; i < num_vertices; i++) {
+        result[i] = x[i];
+    }
+}
+
 template<typename vertex_properties>
 void LimitedMemoryMCTS<vertex_properties>::optimise_states() {
-    std::map<vertex_t, double> prop_UCB = prop_UCBs(root, 1, 1);
-
-    lprec *lp;
-    int Ncol, *colno = NULL, j;
-    REAL *row = NULL;
-
-    /* We will build the model row by row. We start with creating a model with 0 rows and Ncol columns */
-    Ncol = prop_UCB.size(); /* there are Ncol variables in the model */
-    lp = make_lp(0, Ncol);
-    // Set all variables to binary
-    for (j = 1; j <= Ncol; j++) {
-        set_binary(lp, j, TRUE);
-    }
-
-    /* create space large enough for one row */
-    colno = new int[Ncol];
-    row = new REAL[Ncol];
-
-    set_add_rowmode(lp, TRUE);  /* makes building the model faster if it is done rows by row */
-
-    /* construct first row (a + b + c + d + e + f <= MAX_STATES - 1) */
-    for (j = 0; j < Ncol; j++) {
-        colno[j] = j + 1;
-        row[j] = 1;
-    }
-
-    /* add the row to lpsolve */
-    add_constraintex(lp, j, row, colno, LE, MAX_STATES - 1);
-
-    set_add_rowmode(lp, FALSE); /* rowmode should be turned off again when done building the model */
-
-    /* set the objective function (SUM(state * proportional UCB)) */
-    j = 0;
-    for (auto u : boost::make_iterator_range(boost::vertices(graph))) {
-        if (u != root) {
-            colno[j] = j + 1;
-            row[j++] = prop_UCB[u];
-        }
-    }
-
-    /* set the objective in lpsolve */
-    set_obj_fnex(lp, j, row, colno);
-
-    /* set the object direction to maximize */
-    set_maxim(lp);
-
-    /* just out of curiousity, now show the model in lp format on screen */
-    /* this only works if this is a console application. If not, use write_lp and a filename */
-    // write_LP(lp, stdout);
-    /* write_lp(lp, "model.lp"); */
-
-    /* I only want to see important messages on screen while solving */
-    set_verbose(lp, IMPORTANT);
-
-    /* Now let lpsolve calculate a solution */
-    solve(lp);
-
-    /* variable values */
-    get_variables(lp, row);
-    std::map<vertex_t, int> states = std::map<vertex_t, int>();
+    std::map<vertex_t, std::pair<double, double>> prop_UCB = prop_UCBs(root, 1, 1);
+    std::map<vertex_t, int> vertices_to_index = std::map<vertex_t, int>();
+    std::map<int, vertex_t> index_to_vertex = std::map<int, vertex_t>();
     std::vector<vertex_t> leaves = std::vector<vertex_t>();
-    j = 0;
+    int j = 0;
     for (auto u : boost::make_iterator_range(boost::vertices(graph))) {
         if (u != root) {
-            states[u] = row[j++];
+            vertices_to_index[u] = j;
+            index_to_vertex[j] = u;
+            j++;
         }
         if (is_leaf(u)) {
             leaves.push_back(u);
+        }
+    }
+    std::vector<std::vector<int>> paths = std::vector<std::vector<int>>();
+    for (auto it = leaves.begin(); it != leaves.end(); it++) {
+        std::vector<int> path = std::vector<int>();
+        vertex_t vertex = *it;
+        while (vertex != root) { // create path to root
+            path.push_back(vertices_to_index[vertex]);
+            vertex = get_parent(vertex);
+        }
+        
+        paths.push_back(path);
+    }
+
+    double* results = new double[vertices_to_index.size()];
+
+    using namespace Ipopt;
+    using namespace Bonmin;
+    SmartPtr<MyTMINLP> tminlp = new MyTMINLP(vertices_to_index.size(), prop_UCB, vertices_to_index, index_to_vertex, paths, results);
+    
+    BonminSetup bonmin;
+    bonmin.initializeOptionsAndJournalist();
+    bonmin.options()->SetIntegerValue("print_level", 0); // don't print debug from IP Opt
+    bonmin.options()->SetIntegerValue("bonmin.bb_log_level", 0); // don't print debug from Bonmin
+    bonmin.options()->SetIntegerValue("bonmin.fp_log_level", 0);
+    bonmin.options()->SetIntegerValue("bonmin.lp_log_level", 0);
+    bonmin.options()->SetIntegerValue("bonmin.milp_log_level", 0);
+    bonmin.options()->SetIntegerValue("bonmin.nlp_log_at_root", 0);
+    bonmin.options()->SetIntegerValue("bonmin.nlp_log_level", 0);
+    bonmin.options()->SetIntegerValue("bonmin.oa_cuts_log_level", 0);
+    bonmin.options()->SetIntegerValue("bonmin.oa_log_level", 0);
+    bonmin.options()->SetStringValue("sb","yes");
+
+    //Now initialize from tminlp
+    bonmin.initialize(GetRawPtr(tminlp));
+
+    //Set up done, now let's branch and bound
+    try {
+        Bab bb;
+        bb(bonmin);//process parameter file using Ipopt and do branch and bound using Cbc
+    }
+    catch(TNLPSolver::UnsolvedError *E) {
+        //There has been a failure to solve a problem with Ipopt.
+        std::cerr<<"Ipopt has failed to solve a problem"<<std::endl;
+    }
+    catch(OsiTMINLPInterface::SimpleError &E) {
+        std::cerr<<E.className()<<"::"<<E.methodName()
+            <<std::endl
+            <<E.message()<<std::endl;
+    }
+    catch(CoinError &E) {
+        std::cerr<<E.className()<<"::"<<E.methodName()
+            <<std::endl
+            <<E.message()<<std::endl;
+    }
+
+    std::map<vertex_t, int> states = std::map<vertex_t, int>();
+    j = 0;
+    for (auto u : boost::make_iterator_range(boost::vertices(graph))) {
+        if (u != root) {
+            states[u] = !results[j++]; // Inverted as model uses 1 = no state
         }
     }
     states[root] = 1;
@@ -704,20 +1082,7 @@ void LimitedMemoryMCTS<vertex_properties>::optimise_states() {
         path.clear();
     }
 
-    /* free allocated memory */
-    if (row != NULL) {
-        delete[] row;
-    }
-    if (colno != NULL) {
-        delete[] colno;
-    }
-
-    if (lp != NULL) {
-        /* clean up such that all used memory by lpsolve is freed */
-        delete_lp(lp);
-    }
-
-    // std::cout << num_states << '\n';
+    delete[] results;
 }
 
 /* Requires 2 spare states */
@@ -913,6 +1278,16 @@ bool LimitedMemoryMCTS<vertex_properties>::has_state(vertex_t vertex) {
     return graph[vertex].has_state;
 }
 
+template<typename vertex_properties>
+void LimitedMemoryMCTS<vertex_properties>::reset_num_regenerated() {
+    num_regenerated = 0;
+}
+
+template<typename vertex_properties>
+int LimitedMemoryMCTS<vertex_properties>::get_num_regenerated() {
+    return num_regenerated;
+}
+
 int main() {
     // int write_iteration = 0;
     
@@ -927,6 +1302,10 @@ int main() {
 
          // MCTS iterations
         for (int it = 0; it < ITERATIONS; it++) {
+            std::cout << it << '\n';
+            if (it == 500) {
+                exit(0);
+            }
             vertex = mcts.get_root();
 
             // Select
@@ -950,9 +1329,13 @@ int main() {
             // Backpropagate
             mcts.backpropagate(vertex, term);
 
-            mcts.optimise_states();
-            write_dot(mcts.get_graph(), it);
-            while (std::cin.get() != '\n');
+            // std::cout << mcts.get_num_states() << ' ' << mcts.get_num_regenerated() << '\n';
+            if (it % 50 == 0) {
+                mcts.optimise_states();
+            }
+            // write_dot(mcts.get_graph(), it);
+            // mcts.reset_num_regenerated();
+            // while(std::getchar() != '\n');
         }
         
         // write_dot(mcts.get_graph(), write_iteration++);

@@ -30,9 +30,11 @@ class window(QtWidgets.QMainWindow):
     iteration = -1
     max = -1
     init = False
+    states = []
+    regens = []
 
     def __init__(self):
-        self.p = Popen('./mcts', stdin=PIPE, encoding='utf8')
+        self.p = Popen('./mcts', stdin=PIPE, stdout=PIPE, encoding='utf8')
 
         super(window, self).__init__()
 
@@ -43,26 +45,39 @@ class window(QtWidgets.QMainWindow):
         self.ui.nextButton.clicked.connect(self.next)
         self.ui.previousButton.clicked.connect(self.previous)
 
+    def update(self):
+        self.ui.iterationNumber.display(self.iteration + 1)
+
+        self.imageLabel.changePixmap('graph/graph{}.jpg'.format(self.iteration))
+
+        self.ui.statesNumber.display(self.states[self.iteration])
+        self.ui.regenNumber.display(self.regens[self.iteration])
+
     def next(self):
         self.iteration += 1
+        self.ui.iterationNumber.display(self.iteration + 1)
         if self.iteration > self.max:
             self.p.stdin.write("\n")
             self.p.stdin.flush()
             subprocess.check_call(["dot", 'graph/graph{}.dot'.format(self.iteration), "-Tjpg", "-o", 'graph/graph{}.jpg'.format(self.iteration)])
+            states_info = [int(x) for x in self.p.stdout.readline().split()]
+            self.states.append(states_info[0])
+            self.regens.append(states_info[1])
 
         if not self.init:
             self.init = True
             self.imageLabel = Label('graph/graph{}.jpg'.format(self.iteration))
             self.ui.verticalLayout.replaceWidget(self.ui.imageLabel, self.imageLabel)
 
-        self.imageLabel.changePixmap('graph/graph{}.jpg'.format(self.iteration))
+        self.update()
+
         if self.max < self.iteration:
             self.max = self.iteration
 
     def previous(self):
         if self.iteration > 0:
             self.iteration -= 1
-            self.imageLabel.changePixmap('graph/graph{}.jpg'.format(self.iteration))
+            self.update()
 
 
 subprocess.call(['rm graph/graph*'], shell=True)
