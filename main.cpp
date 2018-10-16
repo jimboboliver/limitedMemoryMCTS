@@ -631,7 +631,7 @@ using namespace Bonmin;
 class MyTMINLP : public TMINLP {
     public:
         /// Default constructor.
-        MyTMINLP(int num, std::map<MCTS::vertex_t, std::pair<double, double>> propucb, std::map<MCTS::vertex_t, int> v_to_i, std::map<int, MCTS::vertex_t> i_to_v, std::vector<std::vector<int>> p, double* r);
+        MyTMINLP(int num, std::vector<double> propucb, std::vector<double> propucbdepth, std::vector<std::vector<int>> p, double* r);
         
         /// virtual destructor.
         virtual ~MyTMINLP(){}
@@ -742,17 +742,6 @@ class MyTMINLP : public TMINLP {
                                 Index m, Index nele_jac, Index* iRow, Index *jCol,
                                 Number* values);
         
-        /** Method to compute the Jacobian of the functions defining the constraints.
-            If the parameter values==NULL fill the arrays iCol and jRow which store the position of
-            the non-zero element of the Jacobian.
-            If the paramenter values!=NULL fill values with the non-zero elements of the Jacobian.
-            \param n size of array x (has to be the number of variables in the problem).
-            \param x point where to evaluate.
-            \param new_x Is this the first time we evaluate functions at this point? 
-            (in the present context we don't care).
-            \param m size of array g (has to be equal to the number of constraints in the problem)
-            \param grad_f values of the constraints (function has to fill it).
-            \return true in case of success.*/
         virtual bool eval_h(Index n, const Number* x, bool new_x,
                             Number obj_factor, Index m, const Number* lambda,
                             bool new_lambda, Index nele_hess, Index* iRow,
@@ -771,20 +760,18 @@ class MyTMINLP : public TMINLP {
         
     private:
         int num_vertices;
-        std::map<MCTS::vertex_t, std::pair<double, double>> prop_UCB;
-        std::map<MCTS::vertex_t, int> vertices_to_index;
-        std::map<int, MCTS::vertex_t> index_to_vertex;
+        std::vector<double> prop_UCB;
+        std::vector<double> prop_UCB_Depth;
         std::vector<std::vector<int>> paths;
         double* result;
 };
 
 /* Bonmin stuff */
-MyTMINLP::MyTMINLP(int num, std::map<MCTS::vertex_t, std::pair<double, double>> propucb, std::map<MCTS::vertex_t, int> v_to_i, std::map<int, MCTS::vertex_t> i_to_v, std::vector<std::vector<int>> p, double* r) {
+MyTMINLP::MyTMINLP(int num, std::vector<double> propucb, std::vector<double> propucbdepth, std::vector<std::vector<int>> p, double* r) {
     num_vertices = num;
-    vertices_to_index = v_to_i;
-    index_to_vertex = i_to_v;
     paths = p;
     prop_UCB = propucb;
+    prop_UCB_Depth = propucbdepth;
     result = r;
 }
 
@@ -869,14 +856,13 @@ bool MyTMINLP::eval_f(Index n, const Number* x, bool new_x, Number& obj_value)
             prev_prod *= x[i];
             states += prev_prod;
         }
-        obj_value -= prop_UCB[index_to_vertex[path[0]]].first * (path.size() - states); // multiply proportional UCB of leaf by number of nodes needed to regenerate in path
+        obj_value -= prop_UCB[path[0]] * (path.size() - states); // multiply proportional UCB of leaf by number of nodes needed to regenerate in path
     }
 
     for (int i = 0; i < num_vertices; i++) { // linear whole tree part
-        obj_value -= prop_UCB[index_to_vertex[i]].second * (1 - x[i]); // multiply (proportional UCB * depth) by state
+        obj_value -= prop_UCB_Depth[i] * (1 - x[i]); // multiply (proportional UCB * depth) by state
     }
 
-    // obj_value = -(0.30241*(2 - x[2] - x[2]*x[0]) + 0.2278*(2 - x[3] - x[3]*x[0]) + 0.2807*(2 - x[4] - x[4]*x[1]) + 0.18909*(2 - x[5] - x[5]*x[1]));
     return true;
 }
 
@@ -900,9 +886,9 @@ bool MyTMINLP::eval_grad_f(Index n, const Number* x, bool new_x, Number* grad_f)
                     states += prev_prod;
                 }
             }
-            grad_f[j] += prop_UCB[index_to_vertex[path[0]]].first * states; // add this component of the gradient (non-linear component)
+            grad_f[j] += prop_UCB[path[0]] * states; // add this component of the gradient (non-linear component)
         }
-        grad_f[j] += prop_UCB[index_to_vertex[j]].second; // linear component
+        grad_f[j] += prop_UCB_Depth[j]; // linear component
     }
 
     return true;
@@ -974,7 +960,9 @@ void MyTMINLP::finalize_solution(TMINLP::SolverReturn status, Index n, const Num
 
 template<typename vertex_properties>
 void LimitedMemoryMCTS<vertex_properties>::optimise_states() {
-    std::map<vertex_t, std::pair<double, double>> prop_UCB = prop_UCBs(root, 1, 1);
+    std::map<vertex_t, std::pair<double, double>> prop_UCB_Map = prop_UCBs(root, 1, 1);
+    std::vector<double> prop_UCB;
+    std::vector<double> prop_UCB_Depth;
     std::map<vertex_t, int> vertices_to_index = std::map<vertex_t, int>();
     std::map<int, vertex_t> index_to_vertex = std::map<int, vertex_t>();
     std::vector<vertex_t> leaves = std::vector<vertex_t>();
@@ -983,6 +971,9 @@ void LimitedMemoryMCTS<vertex_properties>::optimise_states() {
         if (u != root) {
             vertices_to_index[u] = j;
             index_to_vertex[j] = u;
+            std::pair<double, double> ucbs = prop_UCB_Map[u];
+            prop_UCB.push_back(ucbs.first);
+            prop_UCB_Depth.push_back(ucbs.second);
             j++;
         }
         if (is_leaf(u)) {
@@ -1005,7 +996,7 @@ void LimitedMemoryMCTS<vertex_properties>::optimise_states() {
 
     using namespace Ipopt;
     using namespace Bonmin;
-    SmartPtr<MyTMINLP> tminlp = new MyTMINLP(vertices_to_index.size(), prop_UCB, vertices_to_index, index_to_vertex, paths, results);
+    SmartPtr<MyTMINLP> tminlp = new MyTMINLP(vertices_to_index.size(), prop_UCB, prop_UCB_Depth, paths, results);
     
     BonminSetup bonmin;
     bonmin.initializeOptionsAndJournalist();
@@ -1303,9 +1294,9 @@ int main() {
          // MCTS iterations
         for (int it = 0; it < ITERATIONS; it++) {
             std::cout << it << '\n';
-            if (it == 500) {
-                exit(0);
-            }
+            // if (it == 500) {
+            //     exit(0);
+            // }
             vertex = mcts.get_root();
 
             // Select
