@@ -28,8 +28,9 @@
 
 #include "BonTMINLP.hpp"
 
-#define ITERATIONS 1000
-#define MAX_STATES 14
+#define MAX_STATES 10
+
+// #define DISPLAY_MODE
 
 template<typename vertex_properties>
 class LimitedMemoryMCTS {
@@ -105,7 +106,7 @@ class LimitedMemoryMCTS {
 
         void forget_state(vertex_t vertex);
 
-        void optimise_states();
+        void optimise_states(bool mini);
 
         bool has_state(vertex_t vertex);
 
@@ -113,13 +114,14 @@ class LimitedMemoryMCTS {
 
         void reset_num_regenerated();
 
-        int get_num_regenerated();
+        void get_num_regenerated(int* nums);
 
     private:
         Graph graph = Graph();
         int num_states = 0;
         vertex_t root;
         int num_regenerated = 0;
+        int ref_num_regenerated = 0;
 };
 
 /* Game stuff */
@@ -518,6 +520,7 @@ template<typename vertex_properties>
 typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex_properties>::select(vertex_t vertex) {
     while (boost::out_degree(vertex, graph) && !has_unborn(vertex)) {
         vertex = select_child(vertex);
+        ref_num_regenerated++;
     }
 
     return vertex;
@@ -631,7 +634,7 @@ using namespace Bonmin;
 class MyTMINLP : public TMINLP {
     public:
         /// Default constructor.
-        MyTMINLP(int num, std::vector<double> propucb, std::vector<double> propucbdepth, std::vector<std::vector<int>> p, double* r);
+        MyTMINLP(std::vector<int> nodesofinterest, std::vector<double> propucb, std::vector<double> propucbdepth, std::vector<std::vector<int>> p, double* r);
         
         /// virtual destructor.
         virtual ~MyTMINLP(){}
@@ -760,6 +763,7 @@ class MyTMINLP : public TMINLP {
         
     private:
         int num_vertices;
+        std::vector<int> nodes_of_interest;
         std::vector<double> prop_UCB;
         std::vector<double> prop_UCB_Depth;
         std::vector<std::vector<int>> paths;
@@ -767,8 +771,9 @@ class MyTMINLP : public TMINLP {
 };
 
 /* Bonmin stuff */
-MyTMINLP::MyTMINLP(int num, std::vector<double> propucb, std::vector<double> propucbdepth, std::vector<std::vector<int>> p, double* r) {
-    num_vertices = num;
+MyTMINLP::MyTMINLP(std::vector<int> nodesofinterest, std::vector<double> propucb, std::vector<double> propucbdepth, std::vector<std::vector<int>> p, double* r) {
+    num_vertices = propucb.size();
+    nodes_of_interest = nodesofinterest;
     paths = p;
     prop_UCB = propucb;
     prop_UCB_Depth = propucbdepth;
@@ -817,8 +822,12 @@ bool MyTMINLP::get_bounds_info(Index n, Number* x_l, Number* x_u,
     assert(m==1);
 
     for (int i = 0; i < num_vertices; i++) {
-        x_l[i] = 0.;
+        x_l[i] = 1.;
         x_u[i] = 1.;  
+    }
+
+    for (int index : nodes_of_interest) { // activate decision variables that are of interest in the tree
+        x_l[index] = 0;
     }
 
     g_l[0] = -DBL_MAX;
@@ -959,7 +968,7 @@ void MyTMINLP::finalize_solution(TMINLP::SolverReturn status, Index n, const Num
 }
 
 template<typename vertex_properties>
-void LimitedMemoryMCTS<vertex_properties>::optimise_states() {
+void LimitedMemoryMCTS<vertex_properties>::optimise_states(bool mini) {
     std::map<vertex_t, std::pair<double, double>> prop_UCB_Map = prop_UCBs(root, 1, 1);
     std::vector<double> prop_UCB;
     std::vector<double> prop_UCB_Depth;
@@ -967,8 +976,12 @@ void LimitedMemoryMCTS<vertex_properties>::optimise_states() {
     std::map<int, vertex_t> index_to_vertex = std::map<int, vertex_t>();
     std::vector<vertex_t> leaves = std::vector<vertex_t>();
     int j = 0;
+    std::vector<int> nodes_of_interest = std::vector<int>();
     for (auto u : boost::make_iterator_range(boost::vertices(graph))) {
         if (u != root) {
+            if (!(mini && !graph[u].has_state)) {
+                nodes_of_interest.push_back(j);
+            }
             vertices_to_index[u] = j;
             index_to_vertex[j] = u;
             std::pair<double, double> ucbs = prop_UCB_Map[u];
@@ -996,7 +1009,7 @@ void LimitedMemoryMCTS<vertex_properties>::optimise_states() {
 
     using namespace Ipopt;
     using namespace Bonmin;
-    SmartPtr<MyTMINLP> tminlp = new MyTMINLP(vertices_to_index.size(), prop_UCB, prop_UCB_Depth, paths, results);
+    SmartPtr<MyTMINLP> tminlp = new MyTMINLP(nodes_of_interest, prop_UCB, prop_UCB_Depth, paths, results);
     
     BonminSetup bonmin;
     bonmin.initializeOptionsAndJournalist();
@@ -1272,11 +1285,13 @@ bool LimitedMemoryMCTS<vertex_properties>::has_state(vertex_t vertex) {
 template<typename vertex_properties>
 void LimitedMemoryMCTS<vertex_properties>::reset_num_regenerated() {
     num_regenerated = 0;
+    ref_num_regenerated = 0;
 }
 
 template<typename vertex_properties>
-int LimitedMemoryMCTS<vertex_properties>::get_num_regenerated() {
-    return num_regenerated;
+void LimitedMemoryMCTS<vertex_properties>::get_num_regenerated(int* nums) {
+    nums[0] = num_regenerated;
+    nums[1] = ref_num_regenerated;
 }
 
 int main() {
@@ -1293,10 +1308,7 @@ int main() {
 
          // MCTS iterations
         for (int it = 0; it < ITERATIONS; it++) {
-            std::cout << it << '\n';
-            // if (it == 500) {
-            //     exit(0);
-            // }
+            // std::cout << it << '\n';
             vertex = mcts.get_root();
 
             // Select
@@ -1320,17 +1332,23 @@ int main() {
             // Backpropagate
             mcts.backpropagate(vertex, term);
 
-            // std::cout << mcts.get_num_states() << ' ' << mcts.get_num_regenerated() << '\n';
+            #ifdef DISPLAY_MODE
+            int nums[2];
+            mcts.get_num_regenerated(nums);
+            std::cout << mcts.get_num_states() << ' ' << nums[0] << ' ' << nums[1] << '\n';
+            #endif
             if (it % 50 == 0) {
-                mcts.optimise_states();
+                mcts.optimise_states(false);
+            } else {
+                mcts.optimise_states(true); // mini optimise
             }
-            // write_dot(mcts.get_graph(), it);
-            // mcts.reset_num_regenerated();
-            // while(std::getchar() != '\n');
+            #ifdef DISPLAY_MODE
+            write_dot(mcts.get_graph(), it);
+            mcts.reset_num_regenerated();
+            while(std::getchar() != '\n');
+            #endif
         }
         
-        // write_dot(mcts.get_graph(), write_iteration++);
-
         vertex = mcts.make_best_play();
         Board* rootBoard = new Board;
         *rootBoard = *(mcts.get_vertex_properties(vertex).state);
@@ -1342,11 +1360,11 @@ int main() {
         term = mcts.terminal(vertex);
 
         if (term == 1) {
-            std::cout << "\nGame over! AI wins\n";
+            std::cout << "\nGame over!\nAI wins\n";
             delete rootBoard;
             break;
         } else if (term == 3) {
-            std::cout << "\nGame over! Draw\n";
+            std::cout << "\nGame over!\nDraw\n";
             delete rootBoard;
             break;
         }
@@ -1377,11 +1395,11 @@ int main() {
         mcts.root_changeover(vertex);
 
         if (term == 2) {
-            std::cout << "\nGame over! Player wins\n";
+            std::cout << "\nGame over!\nPlayer wins\n";
             delete rootBoard;
             break;
         } else if (term == 3) {
-            std::cout << "\nGame over! Draw\n";
+            std::cout << "\nGame over!\nDraw\n";
             delete rootBoard;
             break;
         }
