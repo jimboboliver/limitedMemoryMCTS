@@ -1,2 +1,2 @@
 # limitedMemoryMCTS
-Engineering thesis project investigating using MCTS on hardware with limited memory. 
+Engineering thesis project implementing MCTS for hardware with limited memory.
