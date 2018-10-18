@@ -1308,7 +1308,10 @@ int main() {
 
          // MCTS iterations
         for (int it = 0; it < ITERATIONS; it++) {
+            #ifndef DISPLAY_MODE
             std::cout << it << '\n';
+            #endif
+
             vertex = mcts.get_root();
 
             // Select
