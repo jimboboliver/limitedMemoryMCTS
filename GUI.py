@@ -109,6 +109,7 @@ class window(QtWidgets.QMainWindow):
 
         self.imageDisplay = PhotoViewer(self)
         self.ui.verticalLayout.replaceWidget(self.ui.graphicsView, self.imageDisplay)
+        self.ui.graphicsView.deleteLater()
 
         self.ui.playEdit.setEnabled(False)
         self.ui.playButton.setEnabled(False)
