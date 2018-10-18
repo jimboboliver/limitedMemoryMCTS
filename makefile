@@ -16,7 +16,7 @@ else
 endif
 
 default: main.cpp
-	g++ -std=c++17 -o mcts main.cpp -lm -I$(BOOST) -I$(LP_SOLVE_INCLUDE) -L$(LP_SOLVE_LIB) -llpsolve55 -IBonmin-1.8.6/include/coin $(LIBS) -O3 -DITERATIONS=1000
+	g++ -std=c++17 -o mcts main.cpp -lm -I$(BOOST) -I$(LP_SOLVE_INCLUDE) -L$(LP_SOLVE_LIB) -llpsolve55 -IBonmin-1.8.6/include/coin $(LIBS) -O3 -DITERATIONS=300
 
 visual: main.cpp
 	g++ -std=c++17 -o visualmcts main.cpp -lm -I$(BOOST) -I$(LP_SOLVE_INCLUDE) -L$(LP_SOLVE_LIB) -llpsolve55 -IBonmin-1.8.6/include/coin $(LIBS) -O3 -DITERATIONS=30 -DDISPLAY_MODE
@@ -25,10 +25,10 @@ dots:
 	python dots.py
 
 debug: main.cpp
-	g++ -std=c++17 -o debug main.cpp -lm -g -I$(BOOST) -I$(LP_SOLVE_INCLUDE) -L$(LP_SOLVE_LIB) -llpsolve55 -IBonmin-1.8.6/include/coin $(LIBS) -DITERATIONS=1000
+	g++ -std=c++17 -o debug main.cpp -lm -g -I$(BOOST) -I$(LP_SOLVE_INCLUDE) -L$(LP_SOLVE_LIB) -llpsolve55 -IBonmin-1.8.6/include/coin $(LIBS) -DITERATIONS=100
 
 profile: main.cpp
-	g++ -std=c++17 -o profile main.cpp -lm -pg -I$(BOOST) -I$(LP_SOLVE_INCLUDE) -L$(LP_SOLVE_LIB) -llpsolve55 -IBonmin-1.8.6/include/coin $(LIBS) -O3 -DITERATIONS=1000
+	g++ -std=c++17 -o profile main.cpp -lm -pg -I$(BOOST) -I$(LP_SOLVE_INCLUDE) -L$(LP_SOLVE_LIB) -llpsolve55 -IBonmin-1.8.6/include/coin $(LIBS) -O3 -DITERATIONS=300
 
 test: test.cpp
 	g++ -std=c++17 -Wall -o test test.cpp -I$(BOOST) -I$(LP_SOLVE_INCLUDE) -L$(LP_SOLVE_LIB) -llpsolve55
