@@ -130,15 +130,6 @@ class Ui_MainWindow(object):
         self.verticalLayout.addLayout(self.horizontalLayout_3)
         self.verticalLayout_2.addLayout(self.verticalLayout)
         MainWindow.setCentralWidget(self.centralwidget)
-        self.toolBar = QtWidgets.QToolBar(MainWindow)
-        self.toolBar.setObjectName("toolBar")
-        MainWindow.addToolBar(QtCore.Qt.TopToolBarArea, self.toolBar)
-        self.toolBar_2 = QtWidgets.QToolBar(MainWindow)
-        self.toolBar_2.setObjectName("toolBar_2")
-        MainWindow.addToolBar(QtCore.Qt.TopToolBarArea, self.toolBar_2)
-        self.toolBar_3 = QtWidgets.QToolBar(MainWindow)
-        self.toolBar_3.setObjectName("toolBar_3")
-        MainWindow.addToolBar(QtCore.Qt.TopToolBarArea, self.toolBar_3)
 
         self.retranslateUi(MainWindow)
         QtCore.QMetaObject.connectSlotsByName(MainWindow)
@@ -156,7 +147,4 @@ class Ui_MainWindow(object):
         self.label_4.setText(_translate("MainWindow", "States regenerated so far"))
         self.label_7.setText(_translate("MainWindow", "0-8"))
         self.playButton.setText(_translate("MainWindow", "Play"))
-        self.toolBar.setWindowTitle(_translate("MainWindow", "toolBar"))
-        self.toolBar_2.setWindowTitle(_translate("MainWindow", "toolBar_2"))
-        self.toolBar_3.setWindowTitle(_translate("MainWindow", "toolBar_3"))
 
