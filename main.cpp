@@ -147,8 +147,9 @@ class VertexProperties {
         int visits;
         Board* state;
         unsigned int possible_children;
+        int terminal;
 
-        int terminal();
+        void determine_terminal();
         VertexProperties generate_child(int playNum);
         void regenerate_child(int playNum, VertexProperties* child);
         int playout();
@@ -165,6 +166,7 @@ VertexProperties::VertexProperties() {
     wins = 0;
     visits = 0;
     possible_children = 0;
+    terminal = 0;
 }
 
 VertexProperties::VertexProperties(Board* state_stored, Spot last_player) {
@@ -175,6 +177,7 @@ VertexProperties::VertexProperties(Board* state_stored, Spot last_player) {
     visits = 0;
     possible_children = 0;
     num_possible_moves();
+    determine_terminal();
 }
 
 void VertexProperties::num_possible_moves() {
@@ -315,27 +318,8 @@ int VertexProperties::playout() {
 }
 
 /** Return whether tic-tac-toe state is gameover and if so, who won. 0 = not gameover, 1 = AI, 2 = player, 3 = draw */
-int VertexProperties::terminal() {
-    if (state->spots[0].x && state->spots[0].x == state->spots[1].x && state->spots[1].x == state->spots[2].x) {
-        return state->spots[0].x;
-    } else if (state->spots[3].x && state->spots[3].x == state->spots[4].x && state->spots[4].x == state->spots[5].x) {
-        return state->spots[3].x;
-    } else if (state->spots[6].x && state->spots[6].x == state->spots[7].x && state->spots[7].x == state->spots[8].x) {
-        return state->spots[6].x;
-    } else if (state->spots[0].x && state->spots[0].x == state->spots[3].x && state->spots[3].x == state->spots[6].x) {
-        return state->spots[0].x;
-    } else if (state->spots[1].x && state->spots[1].x == state->spots[4].x && state->spots[4].x == state->spots[7].x) {
-        return state->spots[1].x;
-    } else if (state->spots[2].x && state->spots[2].x == state->spots[5].x && state->spots[5].x == state->spots[8].x) {
-        return state->spots[2].x;
-    } else if (state->spots[0].x && state->spots[0].x == state->spots[4].x && state->spots[4].x == state->spots[8].x) {
-        return state->spots[0].x;
-    } else if (state->spots[2].x && state->spots[2].x == state->spots[4].x && state->spots[4].x == state->spots[6].x) {
-        return state->spots[2].x;
-    } else if (no_moves_left(*state)) {
-        return 3;
-    }
-    return 0;
+void VertexProperties::determine_terminal() {
+    terminal = terminal_board(*state);
 }
 
 typedef LimitedMemoryMCTS<VertexProperties> MCTS;
@@ -1197,6 +1181,8 @@ typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex
         i++;
     }
 
+    int term = terminal(best);
+
     if (!graph[best].has_state) {
         regenerate(best);
     }
@@ -1206,7 +1192,7 @@ typename LimitedMemoryMCTS<vertex_properties>::vertex_t LimitedMemoryMCTS<vertex
 
 template<typename vertex_properties>
 int LimitedMemoryMCTS<vertex_properties>::terminal(vertex_t vertex) {
-    return graph[vertex].terminal();
+    return graph[vertex].terminal;
 }
 
 template<typename vertex_properties>
@@ -1317,14 +1303,13 @@ int main() {
             // Select
             vertex = mcts.select(vertex);
 
-            if (!mcts.has_state(vertex)) {
-                mcts.regenerate(vertex);
-            }
-
             // If not terminal
             if (!(term = mcts.terminal(vertex))) {
                 // Expand
                 if (mcts.has_unborn(vertex)) {
+                    if (!mcts.has_state(vertex)) {
+                        mcts.regenerate(vertex);
+                    }
                     vertex = mcts.add_child(vertex);
                 }
 
@@ -1353,6 +1338,7 @@ int main() {
         }
         
         vertex = mcts.make_best_play();
+        term = mcts.terminal(vertex);
         Board* rootBoard = new Board;
         *rootBoard = *(mcts.get_vertex_properties(vertex).state);
         mcts.root_changeover(vertex);
