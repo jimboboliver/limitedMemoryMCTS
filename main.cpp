@@ -618,7 +618,7 @@ using namespace Bonmin;
 class MyTMINLP : public TMINLP {
     public:
         /// Default constructor.
-        MyTMINLP(std::vector<int> nodesofinterest, std::vector<double> propucb, std::vector<double> propucbdepth, std::vector<std::vector<int>> p, double* r);
+        MyTMINLP(std::vector<int> nodesofinterest, std::vector<double> propucb, std::vector<double> propucbdepth, std::vector<std::vector<int>> p, double* r, std::vector<Index> hr, std::vector<Index> hc, int nh, std::vector<int> sp, bool* nonlin);
         
         /// virtual destructor.
         virtual ~MyTMINLP(){}
@@ -743,8 +743,7 @@ class MyTMINLP : public TMINLP {
 
         virtual const SosInfo * sosConstraints() const{return NULL;}
         virtual const BranchingInfo* branchingInfo() const{return NULL;}
-        
-        
+
     private:
         int num_vertices;
         std::vector<int> nodes_of_interest;
@@ -752,20 +751,29 @@ class MyTMINLP : public TMINLP {
         std::vector<double> prop_UCB_Depth;
         std::vector<std::vector<int>> paths;
         double* result;
+        std::vector<Index> hessRow;
+        std::vector<Index> hessCol;
+        int num_hess;
+        std::vector<int> start_points;
+        bool* is_non_linear;
 };
 
 /* Bonmin stuff */
-MyTMINLP::MyTMINLP(std::vector<int> nodesofinterest, std::vector<double> propucb, std::vector<double> propucbdepth, std::vector<std::vector<int>> p, double* r) {
+MyTMINLP::MyTMINLP(std::vector<int> nodesofinterest, std::vector<double> propucb, std::vector<double> propucbdepth, std::vector<std::vector<int>> p, double* r, std::vector<Index> hr, std::vector<Index> hc, int nh, std::vector<int> sp, bool* nonlin) {
     num_vertices = propucb.size();
     nodes_of_interest = nodesofinterest;
     paths = p;
     prop_UCB = propucb;
     prop_UCB_Depth = propucbdepth;
     result = r;
+    hessRow = hr;
+    hessCol = hc;
+    num_hess = nh;
+    start_points = sp;
+    is_non_linear = nonlin;
 }
 
-bool MyTMINLP::get_variables_types(Index n, VariableType* var_types)
-{
+bool MyTMINLP::get_variables_types(Index n, VariableType* var_types) {
     for (int i = 0; i < num_vertices; i++) {
         var_types[i] = BINARY;
     }
@@ -773,44 +781,39 @@ bool MyTMINLP::get_variables_types(Index n, VariableType* var_types)
     return true;
 }
 
-bool MyTMINLP::get_variables_linearity(Index n, Ipopt::TNLP::LinearityType* var_types)
-{
+bool MyTMINLP::get_variables_linearity(Index n, Ipopt::TNLP::LinearityType* var_types) {
     for (int i = 0; i < num_vertices; i++) {
-        var_types[i] = Ipopt::TNLP::LINEAR;
+        if (is_non_linear[i]) {
+            var_types[i] = Ipopt::TNLP::NON_LINEAR;
+        } else {
+            var_types[i] = Ipopt::TNLP::LINEAR;
+        }
     }
 
     return true;
 }
 
-bool MyTMINLP::get_constraints_linearity(Index m, Ipopt::TNLP::LinearityType* const_types)
-{
-    assert (m==1);
+bool MyTMINLP::get_constraints_linearity(Index m, Ipopt::TNLP::LinearityType* const_types) {
     const_types[0] = Ipopt::TNLP::LINEAR;
     return true;
 }
-bool MyTMINLP::get_nlp_info(Index& n, Index&m, Index& nnz_jac_g,
-                       Index& nnz_h_lag, TNLP::IndexStyleEnum& index_style)
-{
-    n = num_vertices;//number of variables
-    m = 1;//number of constraints
-    nnz_jac_g = num_vertices;//number of non zeroes in Jacobian
-    nnz_h_lag = 0;//number of non zeroes in Hessian of Lagrangean
-    index_style = TNLP::FORTRAN_STYLE;
+bool MyTMINLP::get_nlp_info(Index& n, Index&m, Index& nnz_jac_g, Index& nnz_h_lag, TNLP::IndexStyleEnum& index_style) {
+    n = num_vertices; // number of variables
+    m = 1; // number of constraints
+    nnz_jac_g = num_vertices; // number of non zeroes in Jacobian
+    nnz_h_lag = num_hess; // number of non zeroes in Hessian of Lagrangean (symmetric, only one triangle)
+
+    index_style = TNLP::C_STYLE;
     return true;
 }
 
-bool MyTMINLP::get_bounds_info(Index n, Number* x_l, Number* x_u,
-                            Index m, Number* g_l, Number* g_u)
-{
-    assert(n==num_vertices);
-    assert(m==1);
-
+bool MyTMINLP::get_bounds_info(Index n, Number* x_l, Number* x_u, Index m, Number* g_l, Number* g_u) {
     for (int i = 0; i < num_vertices; i++) {
         x_l[i] = 1.;
         x_u[i] = 1.;  
     }
 
-    for (int index : nodes_of_interest) { // activate decision variables that are of interest in the tree
+    for (int index : nodes_of_interest) { // activate decision variables that are of interest
         x_l[index] = 0;
     }
 
@@ -820,27 +823,16 @@ bool MyTMINLP::get_bounds_info(Index n, Number* x_l, Number* x_u,
     return true;
 }
 
-bool MyTMINLP::get_starting_point(Index n, bool init_x, Number* x,
-                             bool init_z, Number* z_L, Number* z_U,
-                             Index m, bool init_lambda,
-                             Number* lambda)
-{
-    assert(n==num_vertices);
-    assert(m==1);
-    
-    assert(init_x);
-    assert(!init_lambda);
-
+bool MyTMINLP::get_starting_point(Index n, bool init_x, Number* x, bool init_z, Number* z_L, Number* z_U, Index m, bool init_lambda, Number* lambda) {
+    // start at the current configuration
     for (int i = 0; i < num_vertices; i++) {
-        x[i] = 1.0;
+        x[i] = start_points[i];
     }
 
     return true;
 }
 
-bool MyTMINLP::eval_f(Index n, const Number* x, bool new_x, Number& obj_value)
-{
-    assert(n==num_vertices);
+bool MyTMINLP::eval_f(Index n, const Number* x, bool new_x, Number& obj_value) {
     obj_value = 0;
     for (auto path : paths) { // non-linear path iteration part
         double states = 0;
@@ -859,10 +851,7 @@ bool MyTMINLP::eval_f(Index n, const Number* x, bool new_x, Number& obj_value)
     return true;
 }
 
-bool MyTMINLP::eval_grad_f(Index n, const Number* x, bool new_x, Number* grad_f)
-{
-    assert(n==num_vertices);
-
+bool MyTMINLP::eval_grad_f(Index n, const Number* x, bool new_x, Number* grad_f) {
     for (int j = 0; j < num_vertices; j++) {
         grad_f[j] = 0;
         for (auto path : paths) { // non-linear path iteration part
@@ -874,7 +863,11 @@ bool MyTMINLP::eval_grad_f(Index n, const Number* x, bool new_x, Number* grad_f)
                     in_path = true;
                 } else {
                     prev_prod *= x[i];
+                    if (prev_prod == 0) {
+                        break;
+                    }
                 }
+
                 if (in_path) { // subsequent terms all will have the variable so add them to the sum
                     states += prev_prod;
                 }
@@ -887,11 +880,7 @@ bool MyTMINLP::eval_grad_f(Index n, const Number* x, bool new_x, Number* grad_f)
     return true;
 }
 
-bool MyTMINLP::eval_g(Index n, const Number* x, bool new_x, Index m, Number* g)
-{
-    assert(n==num_vertices);
-    assert(m==1);
-    
+bool MyTMINLP::eval_g(Index n, const Number* x, bool new_x, Index m, Number* g) {
     g[0] = num_vertices;
 
     for (int i = 0; i < num_vertices; i++) {
@@ -901,51 +890,68 @@ bool MyTMINLP::eval_g(Index n, const Number* x, bool new_x, Index m, Number* g)
     return true;
 }
 
-bool MyTMINLP::eval_jac_g(Index n, const Number* x, bool new_x,
-                     Index m, Index nnz_jac, Index* iRow, Index *jCol,
-                     Number* values)
-{
-    assert(n==num_vertices);
-    assert(nnz_jac == num_vertices);
-    if(values == NULL) {
+bool MyTMINLP::eval_jac_g(Index n, const Number* x, bool new_x, Index m, Index nnz_jac, Index* iRow, Index *jCol, Number* values) {
+    if (values == NULL) {
 
         for (int i = 0; i < num_vertices; i++) {
-            iRow[i] = 1;
-            jCol[i] = i + 1;
+            iRow[i] = 0;
+            jCol[i] = i;
         }
-        
-        return true;
-    }
-    else {
+    } else {
 
         for (int i = 0; i < num_vertices; i++) {
             values[i] = -1;
         }
-        
-        return true;
     }
-}
 
-bool MyTMINLP::eval_h(Index n, const Number* x, bool new_x,
-                 Number obj_factor, Index m, const Number* lambda,
-                 bool new_lambda, Index nele_hess, Index* iRow,
-                 Index* jCol, Number* values)
-{
-    assert (n==num_vertices);
-    assert (m==1);
-    assert(nele_hess==0);
-    if(values==NULL)
-    {
-        // just zeroes in Hessian
-    }
-    else {
-
-    }
     return true;
 }
 
-void MyTMINLP::finalize_solution(TMINLP::SolverReturn status, Index n, const Number* x, Number obj_value)
-{
+bool MyTMINLP::eval_h(Index n, const Number* x, bool new_x, Number obj_factor, Index m, const Number* lambda, bool new_lambda, Index nele_hess, Index* iRow, Index* jCol, Number* values) {
+    Index idx;
+    if (values == NULL) {
+        for (idx = 0; idx < hessRow.size(); idx++) {
+            iRow[idx] = hessRow[idx];
+            jCol[idx] = hessCol[idx];
+        }
+    } else {
+        for (idx = 0; idx < hessRow.size(); idx++) {
+            values[idx] = 0;
+            int row = hessRow[idx];
+            int col = hessCol[idx];
+
+            for (auto path : paths) { // non-linear path iteration part
+                bool found_row = false; // First differentiation
+                bool found_col = false; // Second differentiation
+                double states = 0;
+                double prev_prod = 1;
+                for (int i : path) {
+                    if (i == row) { // term contains the variable we are differentiating by
+                        found_row = true;
+                    } else if (i == col) {
+                        found_col = true;
+                    } else {
+                        prev_prod *= x[i];
+                        if (prev_prod == 0) {
+                            break;
+                        }
+                    }
+
+                    if (found_row && found_col) { // subsequent terms all will have the variables so add them to the sum
+                        states += prev_prod;
+                    }
+                }
+                if (found_row && found_col) { // There is at least one term that will differentiate twice into this matrix index
+                    values[idx] += prop_UCB[path[0]] * states;
+                }
+            }
+        }
+    }
+
+    return true;
+}
+
+void MyTMINLP::finalize_solution(TMINLP::SolverReturn status, Index n, const Number* x, Number obj_value) {
     for (int i = 0; i < num_vertices; i++) {
         result[i] = x[i];
     }
@@ -961,6 +967,7 @@ void LimitedMemoryMCTS<vertex_properties>::optimise_states(bool mini) {
     std::vector<vertex_t> leaves = std::vector<vertex_t>();
     int j = 0;
     std::vector<int> nodes_of_interest = std::vector<int>();
+    std::vector<int> start_points = std::vector<int>();
     for (auto u : boost::make_iterator_range(boost::vertices(graph))) {
         if (u != root) {
             if (!(mini && !graph[u].has_state)) {
@@ -971,6 +978,7 @@ void LimitedMemoryMCTS<vertex_properties>::optimise_states(bool mini) {
             std::pair<double, double> ucbs = prop_UCB_Map[u];
             prop_UCB.push_back(ucbs.first);
             prop_UCB_Depth.push_back(ucbs.second);
+            start_points.push_back(!graph[u].has_state);
             j++;
         }
         if (is_leaf(u)) {
@@ -991,10 +999,46 @@ void LimitedMemoryMCTS<vertex_properties>::optimise_states(bool mini) {
 
     double* results = new double[vertices_to_index.size()];
 
+    int num_hess = 0;
+    std::vector<Index> hessRow;
+    std::vector<Index> hessCol;
+
+    bool* is_non_linear = new bool[vertices_to_index.size()]; // vector of whether each variable is in at least one non-linear term
+
+    for (int i = 0; i < vertices_to_index.size(); i++) {
+        is_non_linear[i] = false;
+    }
+
+    // Find non-zero elements in Hessian of Lagrangian
+    for (int row = 1; row < prop_UCB.size(); row++) {
+        for (int col = 0; col < row + 1; col++) { // Only look at lower triangle (no non-zeroes will be in diagonal for this problem)
+            for (auto path : paths) { // non-linear path iteration part
+                bool found_row = false; // First differentiation
+                bool found_col = false; // Second differentiation
+                for (int i : path) {
+                    if (path.size() > 1) {
+                        is_non_linear[i] = true;
+                    }
+                    if (i == row) { // term contains the variable we are differentiating by
+                        found_row = true;
+                    } else if (i == col) {
+                        found_col = true;
+                    }
+                }
+                if (found_row && found_col) { // There is at least one term that will differentiate twice into this matrix index
+                    num_hess++;
+                    hessRow.push_back(row);
+                    hessCol.push_back(col);
+                    break; // We can continue onto the next matrix index now
+                }
+            }
+        }
+    }
+
     using namespace Ipopt;
     using namespace Bonmin;
-    SmartPtr<MyTMINLP> tminlp = new MyTMINLP(nodes_of_interest, prop_UCB, prop_UCB_Depth, paths, results);
-    
+    SmartPtr<MyTMINLP> tminlp = new MyTMINLP(nodes_of_interest, prop_UCB, prop_UCB_Depth, paths, results, hessRow, hessCol, num_hess, start_points, is_non_linear);
+
     BonminSetup bonmin;
     bonmin.initializeOptionsAndJournalist();
     bonmin.options()->SetIntegerValue("print_level", 0); // don't print debug from IP Opt
@@ -1071,6 +1115,7 @@ void LimitedMemoryMCTS<vertex_properties>::optimise_states(bool mini) {
     }
 
     delete[] results;
+    delete[] is_non_linear;
 }
 
 /* Requires 2 spare states */
@@ -1325,11 +1370,11 @@ int main() {
             mcts.get_num_regenerated(nums);
             std::cout << mcts.get_num_states() << ' ' << nums[0] << ' ' << nums[1] << '\n';
             #endif
-            if (it % 50 == 0) {
-                mcts.optimise_states(false);
-            } else {
+            // if (it % 50 == 0) {
+                // mcts.optimise_states(false);
+            // } else {
                 mcts.optimise_states(true); // mini optimise
-            }
+            // }
             #ifdef DISPLAY_MODE
             write_dot(mcts.get_graph(), it);
             mcts.reset_num_regenerated();
