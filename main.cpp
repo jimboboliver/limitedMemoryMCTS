@@ -968,6 +968,7 @@ void LimitedMemoryMCTS<vertex_properties>::optimise_states(bool mini) {
     int j = 0;
     std::vector<int> nodes_of_interest = std::vector<int>();
     std::vector<int> start_points = std::vector<int>();
+
     for (auto u : boost::make_iterator_range(boost::vertices(graph))) {
         if (u != root) {
             if (!(mini && !graph[u].has_state)) {
@@ -1326,7 +1327,7 @@ void LimitedMemoryMCTS<vertex_properties>::get_num_regenerated(int* nums) {
 }
 
 int main() {
-    // int write_iteration = 0;
+    // int write_iteration = 0; Each function gets its own color in the visualization graphs: e.g. fun
     
     std::srand(time(NULL));
 
@@ -1371,9 +1372,9 @@ int main() {
             std::cout << mcts.get_num_states() << ' ' << nums[0] << ' ' << nums[1] << '\n';
             #endif
             // if (it % 50 == 0) {
-                // mcts.optimise_states(false);
+                mcts.optimise_states(false);
             // } else {
-                mcts.optimise_states(true); // mini optimise
+                // mcts.optimise_states(true); // mini optimise
             // }
             #ifdef DISPLAY_MODE
             write_dot(mcts.get_graph(), it);

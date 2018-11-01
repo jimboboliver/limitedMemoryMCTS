@@ -23,10 +23,10 @@ dots:
 	python dots.py
 
 debug: main.cpp
-	g++ -std=c++17 -o debug main.cpp -lm -g -I$(BOOST) -IBonmin-1.8.6/include/coin $(LIBS) -DITERATIONS=300
+	g++ -std=c++17 -o debug main.cpp -lm -g -I$(BOOST) -IBonmin-1.8.6/include/coin $(LIBS) -DITERATIONS=100
 
 profile: main.cpp
-	g++ -std=c++17 -o profile main.cpp -lm -pg -I$(BOOST) -IBonmin-1.8.6/include/coin $(LIBS) -O3 -DITERATIONS=300
+	g++ -std=c++17 -o profile main.cpp -lm -pg -I$(BOOST) -IBonmin-1.8.6/include/coin $(LIBS) -O3 -DITERATIONS=100
 
 test: test.cpp
 	g++ -std=c++17 -Wall -o test test.cpp -I$(BOOST)
