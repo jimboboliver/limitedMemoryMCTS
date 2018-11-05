@@ -1,10 +1,10 @@
 #ifndef LMMCTS_INC
 #define LMMCTS_INC
 
+#include "lp_lib.h"
+
 #include <boost/graph/adjacency_list.hpp>
 #include <boost/graph/graphviz.hpp>
-
-#include "FullOptimiseTMINLP.hpp"
 
 #endif
 
@@ -41,7 +41,7 @@ class LimitedMemoryMCTS {
 
         vertex_t get_parent(vertex_t vertex);
 
-        std::map<vertex_t, std::pair<double, double>> prop_UCBs(vertex_t vertex, double currentUCB, int currentDepth);
+        std::map<vertex_t, double> prop_UCBs(vertex_t vertex, double currentUCB, int currentDepth);
 
         int get_child_num(vertex_t parent, vertex_t child);
 
@@ -239,8 +239,8 @@ void LimitedMemoryMCTS<vertex_properties>::regenerate(vertex_t vertex) {
 
 /* Proportional UCB = UCB as a percentage * depth */
 template<typename vertex_properties>
-std::map<typename LimitedMemoryMCTS<vertex_properties>::vertex_t, std::pair<double, double>> LimitedMemoryMCTS<vertex_properties>::prop_UCBs(vertex_t vertex, double currentUCB, int currentDepth) {
-    std::map<vertex_t, std::pair<double, double>> proportional_UCBs;
+std::map<typename LimitedMemoryMCTS<vertex_properties>::vertex_t, double> LimitedMemoryMCTS<vertex_properties>::prop_UCBs(vertex_t vertex, double currentUCB, int currentDepth) {
+    std::map<vertex_t, double> proportional_UCBs;
 
     out_edge_iterator ei, ei_end;
     std::list<std::pair<double, vertex_t>> UCTs;
@@ -256,14 +256,14 @@ std::map<typename LimitedMemoryMCTS<vertex_properties>::vertex_t, std::pair<doub
     }
 
     for (typename std::list<std::pair<double, vertex_t>>::iterator it = UCTs.begin(); it != UCTs.end(); it++) {
-        double new_UCB = currentUCB * ((*it).first / UCTsum);
-        // double new_UCB = (*it).first;
+        // double new_UCB = currentUCB * ((*it).first / UCTsum);
+        double new_UCB = (*it).first;
         if (std::isnan(new_UCB)) {
             new_UCB = 0;
         }
-        proportional_UCBs[(*it).second] = std::make_pair(new_UCB, new_UCB * currentDepth);
+        proportional_UCBs[(*it).second] = new_UCB * currentDepth;
         if (!is_leaf((*it).second)) { // Keep walking tree
-            std::map<vertex_t, std::pair<double, double>> other_UCBs = prop_UCBs((*it).second, new_UCB, currentDepth + 1);
+            std::map<vertex_t, double> other_UCBs = prop_UCBs((*it).second, new_UCB, currentDepth + 1);
             proportional_UCBs.insert(other_UCBs.begin(), other_UCBs.end());
         }
     }
@@ -273,128 +273,74 @@ std::map<typename LimitedMemoryMCTS<vertex_properties>::vertex_t, std::pair<doub
 
 template<typename vertex_properties>
 void LimitedMemoryMCTS<vertex_properties>::optimise_states(bool mini) {
-    std::map<vertex_t, std::pair<double, double>> prop_UCB_Map = prop_UCBs(root, 1, 1);
-    std::vector<double> prop_UCB;
-    std::vector<double> prop_UCB_Depth;
-    std::map<vertex_t, int> vertices_to_index = std::map<vertex_t, int>();
-    std::map<int, vertex_t> index_to_vertex = std::map<int, vertex_t>();
-    std::vector<vertex_t> leaves = std::vector<vertex_t>();
-    int j = 0;
-    std::vector<int> nodes_of_interest = std::vector<int>();
-    std::vector<int> start_points = std::vector<int>();
+    std::map<vertex_t, double> prop_UCB = prop_UCBs(root, 1, 1);
 
-    for (auto u : boost::make_iterator_range(boost::vertices(graph))) {
-        if (u != root) {
-            if (!(mini && !graph[u].has_state)) {
-                nodes_of_interest.push_back(j);
-            }
-            vertices_to_index[u] = j;
-            index_to_vertex[j] = u;
-            std::pair<double, double> ucbs = prop_UCB_Map[u];
-            prop_UCB.push_back(ucbs.first);
-            prop_UCB_Depth.push_back(ucbs.second);
-            start_points.push_back(!graph[u].has_state);
-            j++;
-        }
-        if (is_leaf(u)) {
-            leaves.push_back(u);
-        }
-    }
-    std::vector<std::vector<int>> paths = std::vector<std::vector<int>>();
-    for (auto it = leaves.begin(); it != leaves.end(); it++) {
-        std::vector<int> path = std::vector<int>();
-        vertex_t vertex = *it;
-        while (vertex != root) { // create path to root
-            path.push_back(vertices_to_index[vertex]);
-            vertex = get_parent(vertex);
-        }
-        
-        paths.push_back(path);
+    lprec *lp;
+    int Ncol, *colno = NULL, j;
+    REAL *row = NULL;
+
+    /* We will build the model row by row. We start with creating a model with 0 rows and Ncol columns */
+    Ncol = prop_UCB.size(); /* there are Ncol variables in the model */
+    lp = make_lp(0, Ncol);
+    // Set all variables to binary
+    for (j = 1; j <= Ncol; j++) {
+        set_binary(lp, j, TRUE);
     }
 
-    double* results = new double[vertices_to_index.size()];
+    /* create space large enough for one row */
+    colno = new int[Ncol];
+    row = new REAL[Ncol];
 
-    int num_hess = 0;
-    std::vector<Index> hessRow;
-    std::vector<Index> hessCol;
+    set_add_rowmode(lp, TRUE);  /* makes building the model faster if it is done rows by row */
 
-    bool* is_non_linear = new bool[vertices_to_index.size()]; // vector of whether each variable is in at least one non-linear term
-
-    for (int i = 0; i < vertices_to_index.size(); i++) {
-        is_non_linear[i] = false;
+    /* construct first row (a + b + c + d + e + f <= MAX_STATES - 1) */
+    for (j = 0; j < Ncol; j++) {
+        colno[j] = j + 1;
+        row[j] = 1;
     }
 
-    // Find non-zero elements in Hessian of Lagrangian
-    for (int row = 1; row < prop_UCB.size(); row++) {
-        for (int col = 0; col < row + 1; col++) { // Only look at lower triangle (no non-zeroes will be in diagonal for this problem)
-            for (auto path : paths) { // non-linear path iteration part
-                bool found_row = false; // First differentiation
-                bool found_col = false; // Second differentiation
-                for (int i : path) {
-                    if (path.size() > 1) {
-                        is_non_linear[i] = true;
-                    }
-                    if (i == row) { // term contains the variable we are differentiating by
-                        found_row = true;
-                    } else if (i == col) {
-                        found_col = true;
-                    }
-                }
-                if (found_row && found_col) { // There is at least one term that will differentiate twice into this matrix index
-                    num_hess++;
-                    hessRow.push_back(row);
-                    hessCol.push_back(col);
-                    break; // We can continue onto the next matrix index now
-                }
-            }
-        }
-    }
+    /* add the row to lpsolve */
+    add_constraintex(lp, j, row, colno, LE, MAX_STATES - 1);
 
-    using namespace Ipopt;
-    using namespace Bonmin;
-    SmartPtr<MyTMINLP> tminlp = new MyTMINLP(nodes_of_interest, prop_UCB, prop_UCB_Depth, paths, results, hessRow, hessCol, num_hess, start_points, is_non_linear);
+    set_add_rowmode(lp, FALSE); /* rowmode should be turned off again when done building the model */
 
-    BonminSetup bonmin;
-    bonmin.initializeOptionsAndJournalist();
-    bonmin.options()->SetIntegerValue("print_level", 0); // don't print debug from IP Opt
-    bonmin.options()->SetIntegerValue("bonmin.bb_log_level", 0); // don't print debug from Bonmin
-    bonmin.options()->SetIntegerValue("bonmin.fp_log_level", 0);
-    bonmin.options()->SetIntegerValue("bonmin.lp_log_level", 0);
-    bonmin.options()->SetIntegerValue("bonmin.milp_log_level", 0);
-    bonmin.options()->SetIntegerValue("bonmin.nlp_log_at_root", 0);
-    bonmin.options()->SetIntegerValue("bonmin.nlp_log_level", 0);
-    bonmin.options()->SetIntegerValue("bonmin.oa_cuts_log_level", 0);
-    bonmin.options()->SetIntegerValue("bonmin.oa_log_level", 0);
-    bonmin.options()->SetStringValue("sb","yes");
-
-    //Now initialize from tminlp
-    bonmin.initialize(GetRawPtr(tminlp));
-
-    //Set up done, now let's branch and bound
-    try {
-        Bab bb;
-        bb(bonmin);//process parameter file using Ipopt and do branch and bound using Cbc
-    }
-    catch(TNLPSolver::UnsolvedError *E) {
-        //There has been a failure to solve a problem with Ipopt.
-        std::cerr<<"Ipopt has failed to solve a problem"<<std::endl;
-    }
-    catch(OsiTMINLPInterface::SimpleError &E) {
-        std::cerr<<E.className()<<"::"<<E.methodName()
-            <<std::endl
-            <<E.message()<<std::endl;
-    }
-    catch(CoinError &E) {
-        std::cerr<<E.className()<<"::"<<E.methodName()
-            <<std::endl
-            <<E.message()<<std::endl;
-    }
-
-    std::map<vertex_t, int> states = std::map<vertex_t, int>();
+    /* set the objective function (SUM(state * proportional UCB)) */
     j = 0;
     for (auto u : boost::make_iterator_range(boost::vertices(graph))) {
         if (u != root) {
-            states[u] = !results[j++]; // Inverted as model uses 1 = no state
+            colno[j] = j + 1;
+            row[j++] = prop_UCB[u];
+        }
+    }
+
+    /* set the objective in lpsolve */
+    set_obj_fnex(lp, j, row, colno);
+
+    /* set the object direction to maximize */
+    set_maxim(lp);
+
+    /* just out of curiousity, now show the model in lp format on screen */
+    /* this only works if this is a console application. If not, use write_lp and a filename */
+    // write_LP(lp, stdout);
+    /* write_lp(lp, "model.lp"); */
+
+    /* I only want to see important messages on screen while solving */
+    set_verbose(lp, IMPORTANT);
+
+    /* Now let lpsolve calculate a solution */
+    solve(lp);
+
+    /* variable values */
+    get_variables(lp, row);
+    std::map<vertex_t, int> states = std::map<vertex_t, int>();
+    std::vector<vertex_t> leaves = std::vector<vertex_t>();
+    j = 0;
+    for (auto u : boost::make_iterator_range(boost::vertices(graph))) {
+        if (u != root) {
+            states[u] = row[j++];
+        }
+        if (is_leaf(u)) {
+            leaves.push_back(u);
         }
     }
     states[root] = 1;
@@ -429,8 +375,18 @@ void LimitedMemoryMCTS<vertex_properties>::optimise_states(bool mini) {
         path.clear();
     }
 
-    delete[] results;
-    delete[] is_non_linear;
+    /* free allocated memory */
+    if (row != NULL) {
+        delete[] row;
+    }
+    if (colno != NULL) {
+        delete[] colno;
+    }
+
+    if (lp != NULL) {
+        /* clean up such that all used memory by lpsolve is freed */
+        delete_lp(lp);
+    }
 }
 
 /* Requires 2 spare states */
