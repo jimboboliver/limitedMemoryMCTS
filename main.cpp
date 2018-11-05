@@ -328,12 +328,14 @@ void write_dot(MCTS::Graph* graph, int write_iteration) {
     myfile.close();
 }
 
-int main() {    
+int main(int argc, char** argv) {
     std::srand(time(NULL));
 
     MCTS mcts = MCTS(VertexProperties(new Board{0}, Spot{2}));
 
     MCTS::vertex_t vertex;
+
+    int ITERATIONS = std::stoi(argv[1]);
 
     while (1) {
         int term;
@@ -373,9 +375,9 @@ int main() {
             std::cout << mcts.get_num_states() << ' ' << nums[0] << ' ' << nums[1] << '\n';
             #endif
             // if (it % 50 == 0) {
-                mcts.optimise_states(false);
+            // mcts.optimise_states(false);
             // } else {
-                // mcts.optimise_states(true); // mini optimise
+                mcts.optimise_states(true); // mini optimise
             // }
             #ifdef DISPLAY_MODE
             write_dot(mcts.get_graph(), it);

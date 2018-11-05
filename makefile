@@ -15,19 +15,19 @@ else
 endif
 
 default: main.cpp $(LIMITEDMEMORYMCTS_SRC)
-	g++ -std=c++17 -o mcts $(LIMITEDMEMORYMCTS_SRC) main.cpp -lm -I$(BOOST) -IBonmin-1.8.6/include/coin $(LIBS) -O3 -DITERATIONS=300 -DMAX_STATES=10
+	g++ -std=c++17 -o mcts $(LIMITEDMEMORYMCTS_SRC) main.cpp -lm -I$(BOOST) -IBonmin-1.8.6/include/coin $(LIBS) -O3 -DMAX_STATES=10
 
-visual: main.cpp
-	g++ -std=c++17 -o visualmcts main.cpp $(LIMITEDMEMORYMCTS_SRC) -lm -I$(BOOST) -IBonmin-1.8.6/include/coin $(LIBS) -O3 -DITERATIONS=30 -DDISPLAY_MODE -DMAX_STATES=10
+visual: main.cpp $(LIMITEDMEMORYMCTS_SRC)
+	g++ -std=c++17 -o visualmcts main.cpp $(LIMITEDMEMORYMCTS_SRC) -lm -I$(BOOST) -IBonmin-1.8.6/include/coin $(LIBS) -O3 -DDISPLAY_MODE -DMAX_STATES=10
 
 dots:
 	python dots.py
 
-debug: main.cpp
-	g++ -std=c++17 -o debug main.cpp $(LIMITEDMEMORYMCTS_SRC) -lm -g -I$(BOOST) -IBonmin-1.8.6/include/coin $(LIBS) -DITERATIONS=100 -DMAX_STATES=10
+debug: main.cpp $(LIMITEDMEMORYMCTS_SRC)
+	g++ -std=c++17 -o debug main.cpp $(LIMITEDMEMORYMCTS_SRC) -lm -g -I$(BOOST) -IBonmin-1.8.6/include/coin $(LIBS) -DMAX_STATES=10
 
-profile: main.cpp
-	g++ -std=c++17 -o profile main.cpp $(LIMITEDMEMORYMCTS_SRC) -lm -pg -I$(BOOST) -IBonmin-1.8.6/include/coin $(LIBS) -O3 -DITERATIONS=100 -DMAX_STATES=10
+profile: main.cpp $(LIMITEDMEMORYMCTS_SRC)
+	g++ -std=c++17 -o profile main.cpp $(LIMITEDMEMORYMCTS_SRC) -lm -pg -I$(BOOST) -IBonmin-1.8.6/include/coin $(LIBS) -O3 -DMAX_STATES=100
 
 test: test.cpp
 	g++ -std=c++17 -Wall -o test test.cpp -I$(BOOST)
