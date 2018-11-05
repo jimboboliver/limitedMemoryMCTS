@@ -2,7 +2,7 @@ BOOST=F:\boost\include\boost-1_66
 
 COIN_HAS_PKGCONFIG = TRUE
 
-LIMITEDMEMORYMCTS_SRC = FullOptimiseTMINLP.hpp FullOptimiseTMINLP.cpp LimitedMemoryMCTS.hpp
+LIMITEDMEMORYMCTS_SRC = OptimiseTMINLP.hpp OptimiseTMINLP.cpp LimitedMemoryMCTS.hpp
 # Linker flags
 ifeq ($(COIN_HAS_PKGCONFIG), TRUE)
   LIBS = `PKG_CONFIG_PATH=/home/james/limitedMemoryMCTS/Bonmin-1.8.6/lib64/pkgconfig:/home/james/limitedMemoryMCTS/Bonmin-1.8.6/lib/pkgconfig:/home/james/limitedMemoryMCTS/Bonmin-1.8.6/share/pkgconfig: pkg-config --libs bonmin`
@@ -15,7 +15,7 @@ else
 endif
 
 default: main.cpp $(LIMITEDMEMORYMCTS_SRC)
-	g++ -std=c++17 -o mcts $(LIMITEDMEMORYMCTS_SRC) main.cpp -lm -I$(BOOST) -IBonmin-1.8.6/include/coin $(LIBS) -O3 -DMAX_STATES=10
+	g++ -std=c++17 -o mcts $(LIMITEDMEMORYMCTS_SRC) main.cpp -lm -I$(BOOST) -IBonmin-1.8.6/include/coin $(LIBS) -O3 -DMAX_STATES=100
 
 visual: main.cpp $(LIMITEDMEMORYMCTS_SRC)
 	g++ -std=c++17 -o visualmcts main.cpp $(LIMITEDMEMORYMCTS_SRC) -lm -I$(BOOST) -IBonmin-1.8.6/include/coin $(LIBS) -O3 -DDISPLAY_MODE -DMAX_STATES=10

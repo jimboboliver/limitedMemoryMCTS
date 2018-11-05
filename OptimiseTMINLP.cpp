@@ -1,4 +1,4 @@
-#include "FullOptimiseTMINLP.hpp"
+#include "OptimiseTMINLP.hpp"
 
 MyTMINLP::MyTMINLP(std::vector<int> nodesofinterest, std::vector<double> propucb, std::vector<double> propucbdepth, std::vector<std::vector<int>> p, double* r, std::vector<Index> hr, std::vector<Index> hc, int nh, std::vector<int> sp, bool* nonlin) {
     num_vertices = propucb.size();
